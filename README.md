@@ -1,6 +1,11 @@
 General Information
 -------------------
 
+[![Build MacOS](https://github.com/chbinousamy/wireshark/actions/workflows/macos.yml/badge.svg)](https://github.com/chbinousamy/wireshark/actions/workflows/macos.yml)
+[![Build Ubuntu](https://github.com/chbinousamy/wireshark/actions/workflows/ubuntu.yml/badge.svg)](https://github.com/chbinousamy/wireshark/actions/workflows/ubuntu.yml)
+[![Build Windows](https://github.com/chbinousamy/wireshark/actions/workflows/windows.yml/badge.svg)](https://github.com/chbinousamy/wireshark/actions/workflows/windows.yml)
+[![Build MSYS2](https://github.com/chbinousamy/wireshark/actions/workflows/msys2.yml/badge.svg)](https://github.com/chbinousamy/wireshark/actions/workflows/msys2.yml)
+
 Wireshark is a network traffic analyzer, or "sniffer", for Linux, macOS,
 \*BSD and other Unix and Unix-like operating systems and for Windows.
 It uses Qt, a graphical user interface library, and libpcap and npcap as
