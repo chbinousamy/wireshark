@@ -16,6 +16,7 @@
  */
 
 #include "config.h"
+#include "wtap_opttypes.h"
 
 #define WS_LOG_DOMAIN LOG_DOMAIN_WIRETAP
 
@@ -297,9 +298,26 @@ register_pcapng_block_type_handler(guint block_type, block_reader reader,
     case BLOCK_TYPE_DSB:
     case BLOCK_TYPE_CB_COPY:
     case BLOCK_TYPE_CB_NO_COPY:
+    case BLOCK_TYPE_SYSDIG_MI:
+    case BLOCK_TYPE_SYSDIG_PL_V1:
+    case BLOCK_TYPE_SYSDIG_FDL_V1:
     case BLOCK_TYPE_SYSDIG_EVENT:
+    case BLOCK_TYPE_SYSDIG_IL_V1:
+    case BLOCK_TYPE_SYSDIG_UL_V1:
+    case BLOCK_TYPE_SYSDIG_PL_V2:
+    case BLOCK_TYPE_SYSDIG_EVF:
+    case BLOCK_TYPE_SYSDIG_PL_V3:
+    case BLOCK_TYPE_SYSDIG_PL_V4:
+    case BLOCK_TYPE_SYSDIG_PL_V5:
+    case BLOCK_TYPE_SYSDIG_PL_V6:
+    case BLOCK_TYPE_SYSDIG_PL_V7:
+    case BLOCK_TYPE_SYSDIG_PL_V8:
+    case BLOCK_TYPE_SYSDIG_PL_V9:
     case BLOCK_TYPE_SYSDIG_EVENT_V2:
-    case BLOCK_TYPE_SYSDIG_EVENT_V2_LARGE:
+    case BLOCK_TYPE_SYSDIG_EVF_V2:
+    case BLOCK_TYPE_SYSDIG_FDL_V2:
+    case BLOCK_TYPE_SYSDIG_IL_V2:
+    case BLOCK_TYPE_SYSDIG_UL_V2:
     case BLOCK_TYPE_SYSTEMD_JOURNAL_EXPORT:
         /*
          * Yes; we already handle it, and don't allow a replacement to
@@ -313,9 +331,6 @@ register_pcapng_block_type_handler(guint block_type, block_reader reader,
 
     case BLOCK_TYPE_IRIG_TS:
     case BLOCK_TYPE_ARINC_429:
-    case BLOCK_TYPE_SYSDIG_EVF:
-    case BLOCK_TYPE_SYSDIG_EVF_V2:
-    case BLOCK_TYPE_SYSDIG_EVF_V2_LARGE:
         /*
          * Yes, and we don't already handle it.  Allow a plugin to
          * handle it.
@@ -438,8 +453,8 @@ static GHashTable *option_handlers[NUM_BT_INDICES];
  * or even if there is a fixed answer for all blocks of that type,
  * so we err on the side of not processing.
  */
-static gboolean
-get_block_type_internal(guint block_type)
+static bool
+get_block_type_internal(unsigned block_type)
 {
     switch (block_type) {
 
@@ -448,12 +463,28 @@ get_block_type_internal(guint block_type)
     case BLOCK_TYPE_NRB:
     case BLOCK_TYPE_DSB:
     case BLOCK_TYPE_ISB: /* XXX: ISBs should probably not be internal. */
-        return TRUE;
+    case BLOCK_TYPE_SYSDIG_MI:
+    case BLOCK_TYPE_SYSDIG_PL_V1:
+    case BLOCK_TYPE_SYSDIG_FDL_V1:
+    case BLOCK_TYPE_SYSDIG_IL_V1:
+    case BLOCK_TYPE_SYSDIG_UL_V1:
+    case BLOCK_TYPE_SYSDIG_PL_V2:
+    case BLOCK_TYPE_SYSDIG_PL_V3:
+    case BLOCK_TYPE_SYSDIG_PL_V4:
+    case BLOCK_TYPE_SYSDIG_PL_V5:
+    case BLOCK_TYPE_SYSDIG_PL_V6:
+    case BLOCK_TYPE_SYSDIG_PL_V7:
+    case BLOCK_TYPE_SYSDIG_PL_V8:
+    case BLOCK_TYPE_SYSDIG_PL_V9:
+    case BLOCK_TYPE_SYSDIG_FDL_V2:
+    case BLOCK_TYPE_SYSDIG_IL_V2:
+    case BLOCK_TYPE_SYSDIG_UL_V2:
+        return true;
 
     case BLOCK_TYPE_PB:
     case BLOCK_TYPE_EPB:
     case BLOCK_TYPE_SPB:
-        return FALSE;
+        return false;
 
     case BLOCK_TYPE_CB_COPY:
     case BLOCK_TYPE_CB_NO_COPY:
@@ -461,7 +492,7 @@ get_block_type_internal(guint block_type)
     case BLOCK_TYPE_SYSDIG_EVENT_V2:
     case BLOCK_TYPE_SYSDIG_EVENT_V2_LARGE:
     case BLOCK_TYPE_SYSTEMD_JOURNAL_EXPORT:
-        return FALSE;
+        return false;
 
     default:
 #ifdef HAVE_PLUGINS
@@ -519,7 +550,22 @@ get_block_type_index(guint block_type, guint *bt_index)
         case BLOCK_TYPE_SYSDIG_EVENT:
         case BLOCK_TYPE_SYSDIG_EVENT_V2:
         case BLOCK_TYPE_SYSDIG_EVENT_V2_LARGE:
-        /* case BLOCK_TYPE_SYSDIG_EVF: */
+        case BLOCK_TYPE_SYSDIG_MI:
+        case BLOCK_TYPE_SYSDIG_PL_V1:
+        case BLOCK_TYPE_SYSDIG_FDL_V1:
+        case BLOCK_TYPE_SYSDIG_IL_V1:
+        case BLOCK_TYPE_SYSDIG_UL_V1:
+        case BLOCK_TYPE_SYSDIG_PL_V2:
+        case BLOCK_TYPE_SYSDIG_PL_V3:
+        case BLOCK_TYPE_SYSDIG_PL_V4:
+        case BLOCK_TYPE_SYSDIG_PL_V5:
+        case BLOCK_TYPE_SYSDIG_PL_V6:
+        case BLOCK_TYPE_SYSDIG_PL_V7:
+        case BLOCK_TYPE_SYSDIG_PL_V8:
+        case BLOCK_TYPE_SYSDIG_PL_V9:
+        case BLOCK_TYPE_SYSDIG_FDL_V2:
+        case BLOCK_TYPE_SYSDIG_IL_V2:
+        case BLOCK_TYPE_SYSDIG_UL_V2:
             *bt_index = BT_INDEX_EVT;
             break;
 
@@ -1497,7 +1543,9 @@ pcapng_read_if_descr_block(wtap *wth, FILE_T fh, pcapng_block_header_t *bh,
                            section_info_t *section_info,
                            wtapng_block_t *wblock, int *err, gchar **err_info)
 {
-    guint64 time_units_per_second = 1000000; /* default = 10^6 */
+    /* Default time stamp resolution is 10^6 */
+    guint64 time_units_per_second = 1000000;
+    int     tsprecision = 6;
     guint   opt_cont_buf_len;
     pcapng_interface_description_block_t idb;
     wtapng_if_descr_mandatory_t* if_descr_mand;
@@ -1573,24 +1621,108 @@ pcapng_read_if_descr_block(wtap *wth, FILE_T fh, pcapng_block_header_t *bh,
         /*
          * Yes.  Set time_units_per_second appropriately.
          */
-        guint64 base;
-        guint64 result;
-        guint8 i, exponent;
+        guint8 exponent;
 
-        if (if_tsresol & 0x80) {
-            base = 2;
-        } else {
-            base = 10;
-        }
         exponent = (guint8)(if_tsresol & 0x7f);
-        if (((base == 2) && (exponent < 64)) || ((base == 10) && (exponent < 20))) {
+        if (if_tsresol & 0x80) {
+            /*
+             * 2^63 fits in a 64-bit unsigned number; 2^64 does not.
+             *
+             * ((2^64-1)/(2^63) is about 1.99, so, in practice, that
+             * fine a time stamp resolution works only if you start
+             * capturing at the Unix/POSIX epoch and capture for about
+             * 1.9 seconds, so the maximum useful power-of-2 exponent
+             * in a pcapng file is less than 63.)
+             */
+            if (exponent > 63) {
+                /*
+                 * Time units per second won't fit in a 64-bit integer,
+                 * so Wireshark's current code can't read the file.
+                 */
+                *err = WTAP_ERR_UNSUPPORTED;
+                *err_info = ws_strdup_printf("pcapng: IDB power-of-2 time stamp resolution %u > 63",
+                                             exponent);
+                return FALSE;
+            }
+
+            /* 2^exponent */
+            time_units_per_second = G_GUINT64_CONSTANT(1) << exponent;
+
+            /*
+             * Set the display precision to a value large enough to
+             * show the fractional time units we get, so that we
+             * don't display more digits than are justified.
+             *
+             * (That's also used as the base-10 if_tsresol value we use
+             * if we write this file as a pcapng file.  Yes, that means
+             * that we won't write out the exact value we read in.
+             *
+             * Dealing with base-2 time stamps is a bit of a mess,
+             * thanks to humans counting with their fingers rather
+             * than their hands, and it applies to mroe files than
+             * pcapng files, e.g. ERF files.)
+             */
+            if (time_units_per_second >= 1000000000)
+                tsprecision = WTAP_TSPREC_NSEC;
+            else if (time_units_per_second >= 100000000)
+                tsprecision = WTAP_TSPREC_10_NSEC;
+            else if (time_units_per_second >= 10000000)
+                tsprecision = WTAP_TSPREC_100_NSEC;
+            else if (time_units_per_second >= 1000000)
+                tsprecision = WTAP_TSPREC_USEC;
+            else if (time_units_per_second >= 100000)
+                tsprecision = WTAP_TSPREC_10_USEC;
+            else if (time_units_per_second >= 10000)
+                tsprecision = WTAP_TSPREC_100_USEC;
+            else if (time_units_per_second >= 1000)
+                tsprecision = WTAP_TSPREC_MSEC;
+            else if (time_units_per_second >= 100)
+                tsprecision = WTAP_TSPREC_10_MSEC;
+            else if (time_units_per_second >= 10)
+                tsprecision = WTAP_TSPREC_100_MSEC;
+            else
+                tsprecision = WTAP_TSPREC_SEC;
+        } else {
+            /*
+             * 10^19 fits in a 64-bit unsigned number; 10^20 does not.
+             *
+             * ((2^64-1)/(10^19) is about 1.84, so, in practice, that
+             * fine a time stamp resolution works only if you start
+             * capturing at the Unix/POSIX epoch and capture for about
+             * 1.8 seconds, so the maximum useful power-of-10 exponent
+             * in a pcapng file is less than 19.)
+             */
+            guint64 result;
+
+            if (exponent > 19) {
+                /*
+                 * Time units per second won't fit in a 64-bit integer,
+                 * so Wireshark's current code can't read the file.
+                 */
+                *err = WTAP_ERR_UNSUPPORTED;
+                *err_info = ws_strdup_printf("pcapng: IDB power-of-10 time stamp resolution %u > 19",
+                                             exponent);
+                return FALSE;
+            }
+
+            /* 10^exponent */
             result = 1;
-            for (i = 0; i < exponent; i++) {
-                result *= base;
+            for (guint i = 0; i < exponent; i++) {
+                result *= 10U;
             }
             time_units_per_second = result;
-        } else {
-            time_units_per_second = G_MAXUINT64;
+
+            /*
+             * Set the display precision to min(exponent, WS_TSPREC_MAX),
+             * so that we don't display more digits than are justified.
+             * (That's also used as the base-10 if_tsresol value we use
+             * if we write this file as a pcapng file.)
+             */
+            if (exponent <= WS_TSPREC_MAX) {
+                tsprecision = exponent;
+            } else {
+                tsprecision = WS_TSPREC_MAX;
+            }
         }
         if (time_units_per_second > (((guint64)1) << 32)) {
             ws_debug("time conversion might be inaccurate");
@@ -1601,18 +1733,13 @@ pcapng_read_if_descr_block(wtap *wth, FILE_T fh, pcapng_block_header_t *bh,
      * Set the time units per second for this interface.
      */
     if_descr_mand->time_units_per_second = time_units_per_second;
-    if (time_units_per_second >= 1000000000)
-        if_descr_mand->tsprecision = WTAP_TSPREC_NSEC;
-    else if (time_units_per_second >= 1000000)
-        if_descr_mand->tsprecision = WTAP_TSPREC_USEC;
-    else if (time_units_per_second >= 1000)
-        if_descr_mand->tsprecision = WTAP_TSPREC_MSEC;
-    else if (time_units_per_second >= 100)
-        if_descr_mand->tsprecision = WTAP_TSPREC_CSEC;
-    else if (time_units_per_second >= 10)
-        if_descr_mand->tsprecision = WTAP_TSPREC_DSEC;
-    else
-        if_descr_mand->tsprecision = WTAP_TSPREC_SEC;
+
+    /*
+     * Set the number of digits of precision to display (and the
+     * number to use for this interface if saving to a pcapng
+     * file).
+     */
+    if_descr_mand->tsprecision = tsprecision;
 
     /*
      * If the per-file encapsulation isn't known, set it to this
@@ -1708,6 +1835,55 @@ pcapng_read_decryption_secrets_block(FILE_T fh, pcapng_block_header_t *bh,
     wblock->internal = TRUE;
 
     return TRUE;
+}
+
+static bool
+pcapng_read_sysdig_meta_event_block(FILE_T fh, pcapng_block_header_t *bh,
+                                     wtapng_block_t *wblock,
+                                     int *err, gchar **err_info)
+{
+    guint to_read;
+    wtapng_sysdig_mev_mandatory_t *mev_mand;
+
+    /*
+     * Set wblock->block to a newly-allocated Sysdig meta event block.
+     */
+    wblock->block = wtap_block_create(WTAP_BLOCK_SYSDIG_META_EVENT);
+
+    /*
+     * Set the mandatory values for the block.
+     */
+    mev_mand = (wtapng_sysdig_mev_mandatory_t *)wtap_block_get_mandatory_data(wblock->block);
+    mev_mand->mev_type = bh->block_type;
+    mev_mand->mev_data_len = bh->block_total_length -
+        (int)sizeof(pcapng_block_header_t) -
+        (int)sizeof(bh->block_total_length);
+
+    /* Sanity check: assume event data can't be larger than 1 GiB */
+    if (mev_mand->mev_data_len > 1024 * 1024 * 1024) {
+      *err = WTAP_ERR_BAD_FILE;
+      *err_info = ws_strdup_printf("pcapng: Sysdig mev block is too large: %u", mev_mand->mev_data_len);
+      return false;
+    }
+    mev_mand->mev_data = (uint8_t *)g_malloc(mev_mand->mev_data_len);
+    if (!wtap_read_bytes(fh, mev_mand->mev_data, mev_mand->mev_data_len, err, err_info)) {
+        ws_debug("failed to read Sysdig mev");
+        return false;
+    }
+
+    /* Skip past padding and discard options (not supported yet). */
+    to_read = bh->block_total_length - MIN_BLOCK_SIZE - mev_mand->mev_data_len;
+    if (!wtap_read_bytes(fh, NULL, to_read, err, err_info)) {
+        ws_debug("failed to read Sysdig mev options");
+        return FALSE;
+    }
+
+    /*
+     * We don't return these to the caller in pcapng_read().
+     */
+    wblock->internal = true;
+
+    return true;
 }
 
 static gboolean
@@ -3357,6 +3533,25 @@ pcapng_read_block(wtap *wth, FILE_T fh, pcapng_t *pn,
                 if (!pcapng_read_decryption_secrets_block(fh, &bh, section_info, wblock, err, err_info))
                     return FALSE;
                 break;
+            case BLOCK_TYPE_SYSDIG_MI:
+            case BLOCK_TYPE_SYSDIG_PL_V1:
+            case BLOCK_TYPE_SYSDIG_FDL_V1:
+            case BLOCK_TYPE_SYSDIG_IL_V1:
+            case BLOCK_TYPE_SYSDIG_UL_V1:
+            case BLOCK_TYPE_SYSDIG_PL_V2:
+            case BLOCK_TYPE_SYSDIG_PL_V3:
+            case BLOCK_TYPE_SYSDIG_PL_V4:
+            case BLOCK_TYPE_SYSDIG_PL_V5:
+            case BLOCK_TYPE_SYSDIG_PL_V6:
+            case BLOCK_TYPE_SYSDIG_PL_V7:
+            case BLOCK_TYPE_SYSDIG_PL_V8:
+            case BLOCK_TYPE_SYSDIG_PL_V9:
+            case BLOCK_TYPE_SYSDIG_FDL_V2:
+            case BLOCK_TYPE_SYSDIG_IL_V2:
+            case BLOCK_TYPE_SYSDIG_UL_V2:
+                if (!pcapng_read_sysdig_meta_event_block(fh, &bh, wblock, err, err_info))
+                    return FALSE;
+                break;
             case(BLOCK_TYPE_CB_COPY):
             case(BLOCK_TYPE_CB_NO_COPY):
                 if (!pcapng_read_custom_block(fh, &bh, section_info, wblock, err, err_info))
@@ -3447,6 +3642,16 @@ pcapng_process_dsb(wtap *wth, wtapng_block_t *wblock)
 
     /* Store DSB such that it can be saved by the dumper. */
     g_array_append_val(wth->dsbs, wblock->block);
+}
+
+/* Process a Sysdig meta event block that we have just read. */
+static void
+pcapng_process_sysdig_mev(wtap *wth, wtapng_block_t *wblock)
+{
+    // XXX add wtapng_process_sysdig_meb(wth, wblock->block);
+
+    /* Store meta event such that it can be saved by the dumper. */
+    g_array_append_val(wth->sysdig_meta_events, wblock->block);
 }
 
 static void
@@ -3546,6 +3751,28 @@ pcapng_process_internal_block(wtap *wth, pcapng_t *pcapng, section_info_t *curre
                 wtapng_if_descr_mand->num_stat_entries++;
             }
             wtap_block_unref(wblock->block);
+            break;
+
+        case BLOCK_TYPE_SYSDIG_MI:
+        case BLOCK_TYPE_SYSDIG_PL_V1:
+        case BLOCK_TYPE_SYSDIG_FDL_V1:
+        case BLOCK_TYPE_SYSDIG_IL_V1:
+        case BLOCK_TYPE_SYSDIG_UL_V1:
+        case BLOCK_TYPE_SYSDIG_PL_V2:
+        case BLOCK_TYPE_SYSDIG_PL_V3:
+        case BLOCK_TYPE_SYSDIG_PL_V4:
+        case BLOCK_TYPE_SYSDIG_PL_V5:
+        case BLOCK_TYPE_SYSDIG_PL_V6:
+        case BLOCK_TYPE_SYSDIG_PL_V7:
+        case BLOCK_TYPE_SYSDIG_PL_V8:
+        case BLOCK_TYPE_SYSDIG_PL_V9:
+        case BLOCK_TYPE_SYSDIG_FDL_V2:
+        case BLOCK_TYPE_SYSDIG_IL_V2:
+        case BLOCK_TYPE_SYSDIG_UL_V2:
+            /* Decryption secrets. */
+            ws_debug("block type Sysdig meta event");
+            pcapng_process_sysdig_mev(wth, wblock);
+            /* Do not free wblock->block, it is consumed by pcapng_process_sysdig_meb */
             break;
 
         default:
@@ -3702,11 +3929,13 @@ pcapng_open(wtap *wth, int *err, gchar **err_info)
     wth->subtype_close = pcapng_close;
     wth->file_type_subtype = pcapng_file_type_subtype;
 
-    /* Always initialize the lists of Decryption Secret Blocks and
-     * Name Resolution Blocks such that a wtap_dumper can refer to
-     * them right after opening the capture file. */
+    /* Always initialize the lists of Decryption Secret Blocks, Name
+     * Resolution Blocks, and Sysdig meta event blocks such that a
+     * wtap_dumper can refer to them right after opening the capture
+     * file. */
     wth->dsbs = g_array_new(FALSE, FALSE, sizeof(wtap_block_t));
     wth->nrbs = g_array_new(FALSE, FALSE, sizeof(wtap_block_t));
+    wth->sysdig_meta_events = g_array_new(FALSE, FALSE, sizeof(wtap_block_t));
 
     /* Most other capture types (such as pcap) support a single link-layer
      * type, indicated in the header, and don't support WTAP_ENCAP_PER_PACKET.
@@ -5372,6 +5601,39 @@ pcapng_write_decryption_secrets_block(wtap_dumper *wdh, wtap_block_t sdata, int 
     return TRUE;
 }
 
+static bool
+pcapng_write_sysdig_meta_event_block(wtap_dumper *wdh, wtap_block_t mev_data, int *err)
+{
+    pcapng_block_header_t bh;
+    wtapng_sysdig_mev_mandatory_t *mand_data = (wtapng_sysdig_mev_mandatory_t *)wtap_block_get_mandatory_data(mev_data);
+    unsigned pad_len = (4 - (mand_data->mev_data_len & 3)) & 3;
+
+    /* write block header */
+    bh.block_type = mand_data->mev_type;
+    bh.block_total_length = MIN_BLOCK_SIZE + mand_data->mev_data_len + pad_len;
+    ws_debug("Sysdig mev total len %u", bh.block_total_length);
+
+    if (!wtap_dump_file_write(wdh, &bh, sizeof bh, err))
+        return false;
+
+    /* write block fixed content */
+    if (!wtap_dump_file_write(wdh, mand_data->mev_data, mand_data->mev_data_len, err))
+        return false;
+
+    if (pad_len) {
+        const uint32_t zero_pad = 0;
+        if (!wtap_dump_file_write(wdh, &zero_pad, pad_len, err))
+            return false;
+    }
+
+    /* write block footer */
+    if (!wtap_dump_file_write(wdh, &bh.block_total_length,
+                              sizeof bh.block_total_length, err))
+        return false;
+
+    return true;
+}
+
 /*
  * libpcap's maximum pcapng block size is currently 16MB.
  *
@@ -6012,6 +6274,19 @@ static gboolean pcapng_write_internal_blocks(wtap_dumper *wdh, int *err)
         }
     }
 
+    /* Write (optional) Sysdig Meta Event Blocks that were collected while
+     * reading packet blocks. */
+    if (wdh->sysdig_mev_growing) {
+        for (unsigned i = wdh->sysdig_mev_growing_written; i < wdh->sysdig_mev_growing->len; i++) {
+            ws_debug("writing Sysdig mev %u", i);
+            wtap_block_t mev = g_array_index(wdh->sysdig_mev_growing, wtap_block_t, i);
+            if (!pcapng_write_sysdig_meta_event_block(wdh, mev, err)) {
+                return false;
+            }
+            ++wdh->sysdig_mev_growing_written;
+        }
+    }
+
     /* Write any hostname resolution info from wtap_dump_set_addrinfo_list() */
     if (!wtap_addrinfo_list_empty(wdh->addrinfo_lists)) {
         /*
@@ -6369,6 +6644,15 @@ static const struct supported_option_type decryption_secrets_block_options_suppo
     { OPT_CUSTOM_BIN_NO_COPY, MULTIPLE_OPTIONS_SUPPORTED }
 };
 
+/* Options for Sysdig meta event blocks. */
+static const struct supported_option_type sysdig_meta_events_block_options_supported[] = {
+    { OPT_COMMENT, MULTIPLE_OPTIONS_SUPPORTED },
+    { OPT_CUSTOM_STR_COPY, MULTIPLE_OPTIONS_SUPPORTED },
+    { OPT_CUSTOM_BIN_COPY, MULTIPLE_OPTIONS_SUPPORTED },
+    { OPT_CUSTOM_STR_NO_COPY, MULTIPLE_OPTIONS_SUPPORTED },
+    { OPT_CUSTOM_BIN_NO_COPY, MULTIPLE_OPTIONS_SUPPORTED }
+};
+
 /* Options for packet blocks. */
 static const struct supported_option_type packet_block_options_supported[] = {
     { OPT_COMMENT, MULTIPLE_OPTIONS_SUPPORTED },
@@ -6426,6 +6710,9 @@ static const struct supported_block_type pcapng_blocks_supported[] = {
 
     /* Multiple blocks of decryption secrets. */
     { WTAP_BLOCK_DECRYPTION_SECRETS, MULTIPLE_BLOCKS_SUPPORTED, OPTION_TYPES_SUPPORTED(decryption_secrets_block_options_supported) },
+
+    /* Multiple blocks of decryption secrets. */
+    { WTAP_BLOCK_SYSDIG_META_EVENT, MULTIPLE_BLOCKS_SUPPORTED, OPTION_TYPES_SUPPORTED(sysdig_meta_events_block_options_supported) },
 
     /* And, obviously, multiple packets. */
     { WTAP_BLOCK_PACKET, MULTIPLE_BLOCKS_SUPPORTED, OPTION_TYPES_SUPPORTED(packet_block_options_supported) },

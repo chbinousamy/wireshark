@@ -305,6 +305,7 @@ gchar *g_ethers_path    = NULL;     /* global ethers file     */
 gchar *g_pethers_path   = NULL;     /* personal ethers file   */
 gchar *g_wka_path       = NULL;     /* global well-known-addresses file */
 gchar *g_manuf_path     = NULL;     /* global manuf file      */
+gchar *g_pmanuf_path    = NULL;     /* personal manuf file      */
 gchar *g_ipxnets_path   = NULL;     /* global ipxnets file    */
 gchar *g_pipxnets_path  = NULL;     /* personal ipxnets file  */
 gchar *g_services_path  = NULL;     /* global services file   */
@@ -396,7 +397,7 @@ dns_server_copy_cb(void *dst_, const void *src_, size_t len _U_)
     return dst;
 }
 
-static gboolean
+static bool
 dnsserver_uat_fld_ip_chk_cb(void* r _U_, const char* ipaddr, guint len _U_, const void* u1 _U_, const void* u2 _U_, char** err)
 {
     //Check for a valid IPv4 or IPv6 address.
@@ -409,7 +410,7 @@ dnsserver_uat_fld_ip_chk_cb(void* r _U_, const char* ipaddr, guint len _U_, cons
     return FALSE;
 }
 
-static gboolean
+static bool
 dnsserver_uat_fld_port_chk_cb(void* r _U_, const char* p, guint len _U_, const void* u1 _U_, const void* u2 _U_, char** err)
 {
     if (!p || strlen(p) == 0u) {
@@ -1668,11 +1669,13 @@ add_manuf_name(const guint8 *addr, unsigned int mask, gchar *name, gchar *longna
 } /* add_manuf_name */
 
 static hashmanuf_t *
-manuf_name_lookup(const guint8 *addr)
+manuf_name_lookup(const guint8 *addr, size_t size)
 {
     guint32       manuf_key;
     guint8       oct;
     hashmanuf_t  *manuf_value;
+
+    ws_return_val_if(size < 6, NULL);
 
     /* manuf needs only the 3 most significant octets of the ethernet address */
     manuf_key = addr[0];
@@ -1802,16 +1805,35 @@ initialize_ethers(void)
         }
     }
 
-    /* Compute the pathname of the manuf file */
+    /* Compute the pathname of the global manuf file */
     if (g_manuf_path == NULL)
         g_manuf_path = get_datafile_path(ENAME_MANUF);
-
     /* Read it and initialize the hash table */
-    set_ethent(g_manuf_path);
-    while ((eth = get_ethent(&mask, TRUE))) {
-        add_manuf_name(eth->addr, mask, eth->name, eth->longname);
+    if (file_exists(g_manuf_path)) {
+        set_ethent(g_manuf_path);
+        while ((eth = get_ethent(&mask, TRUE))) {
+            add_manuf_name(eth->addr, mask, eth->name, eth->longname);
+        }
+        end_ethent();
     }
-    end_ethent();
+
+    /* Compute the pathname of the personal manuf file */
+    if (g_pmanuf_path == NULL) {
+        /* Check profile directory before personal configuration */
+        g_pmanuf_path = get_persconffile_path(ENAME_MANUF, TRUE);
+        if (!file_exists(g_pmanuf_path)) {
+            g_free(g_pmanuf_path);
+            g_pmanuf_path = get_persconffile_path(ENAME_MANUF, FALSE);
+        }
+    }
+    /* Read it and initialize the hash table */
+    if (file_exists(g_pmanuf_path)) {
+        set_ethent(g_pmanuf_path);
+        while ((eth = get_ethent(&mask, TRUE))) {
+            add_manuf_name(eth->addr, mask, eth->name, eth->longname);
+        }
+        end_ethent();
+    }
 
     /* Compute the pathname of the wka file */
     if (g_wka_path == NULL)
@@ -1838,6 +1860,8 @@ ethers_cleanup(void)
     g_pethers_path = NULL;
     g_free(g_manuf_path);
     g_manuf_path = NULL;
+    g_free(g_pmanuf_path);
+    g_pmanuf_path = NULL;
     g_free(g_wka_path);
     g_wka_path = NULL;
 }
@@ -1848,6 +1872,7 @@ eth_addr_resolve(hashether_t *tp) {
     ether_t      *eth;
     hashmanuf_t *manuf_value;
     const guint8 *addr = tp->addr;
+    size_t addr_size = sizeof(tp->addr);
 
     if ( (eth = get_ethbyaddr(addr)) != NULL) {
         (void) g_strlcpy(tp->resolved_name, eth->name, MAXNAMELEN);
@@ -1894,7 +1919,7 @@ eth_addr_resolve(hashether_t *tp) {
         } while (mask--);
 
         /* Now try looking in the manufacturer table. */
-        manuf_value = manuf_name_lookup(addr);
+        manuf_value = manuf_name_lookup(addr, addr_size);
         if ((manuf_value != NULL) && (manuf_value->status != HASHETHER_STATUS_UNRESOLVED)) {
             snprintf(tp->resolved_name, MAXNAMELEN, "%s_%02x:%02x:%02x",
                     manuf_value->resolved_name, addr[3], addr[4], addr[5]);
@@ -2159,6 +2184,7 @@ initialize_ipxnets(void)
 static void
 ipx_name_lookup_cleanup(void)
 {
+    g_ipxnets_path = NULL;
     g_free(g_pipxnets_path);
     g_pipxnets_path = NULL;
 }
@@ -3461,11 +3487,11 @@ get_vlan_name(wmem_allocator_t *allocator, const guint16 id)
 } /* get_vlan_name */
 
 const gchar *
-get_manuf_name(const guint8 *addr)
+get_manuf_name(const guint8 *addr, size_t size)
 {
     hashmanuf_t *manuf_value;
 
-    manuf_value = manuf_name_lookup(addr);
+    manuf_value = manuf_name_lookup(addr, size);
     if (gbl_resolv_flags.mac_name && manuf_value->status != HASHETHER_STATUS_UNRESOLVED)
         return manuf_value->resolved_name;
 
@@ -3476,15 +3502,19 @@ get_manuf_name(const guint8 *addr)
 const gchar *
 tvb_get_manuf_name(tvbuff_t *tvb, gint offset)
 {
-    return get_manuf_name(tvb_get_ptr(tvb, offset, 3));
+    guint8 buf[6] = { 0 };
+    tvb_memcpy(tvb, buf, offset, 3);
+    return get_manuf_name(buf, sizeof(buf));
 }
 
 const gchar *
-get_manuf_name_if_known(const guint8 *addr)
+get_manuf_name_if_known(const guint8 *addr, size_t size)
 {
     hashmanuf_t *manuf_value;
     guint manuf_key;
     guint8 oct;
+
+    ws_return_val_if(size != 6, NULL);
 
     /* manuf needs only the 3 most significant octets of the ethernet address */
     manuf_key = addr[0];
@@ -3496,31 +3526,54 @@ get_manuf_name_if_known(const guint8 *addr)
     manuf_key = manuf_key | oct;
 
     manuf_value = (hashmanuf_t *)wmem_map_lookup(manuf_hashtable, GUINT_TO_POINTER(manuf_key));
-    if ((manuf_value == NULL) || (manuf_value->status == HASHETHER_STATUS_UNRESOLVED)) {
-        return NULL;
+    if (manuf_value != NULL && manuf_value->status != HASHETHER_STATUS_UNRESOLVED) {
+        return manuf_value->resolved_longname;
     }
 
-    return manuf_value->resolved_longname;
+    /* Try the global manuf tables. */
+    const char *short_name, *long_name;
+    short_name = ws_manuf_lookup_str(addr, &long_name);
+    if (short_name != NULL) {
+        /* Found it */
+        return long_name;
+    }
+
+    return NULL;
 
 } /* get_manuf_name_if_known */
 
 const gchar *
-uint_get_manuf_name_if_known(const guint manuf_key)
+uint_get_manuf_name_if_known(const guint32 manuf_key)
 {
     hashmanuf_t *manuf_value;
+    guint8 addr[6] = { 0 };
 
     manuf_value = (hashmanuf_t *)wmem_map_lookup(manuf_hashtable, GUINT_TO_POINTER(manuf_key));
-    if ((manuf_value == NULL) || (manuf_value->status == HASHETHER_STATUS_UNRESOLVED)) {
-        return NULL;
+    if (manuf_value != NULL && manuf_value->status != HASHETHER_STATUS_UNRESOLVED) {
+        return manuf_value->resolved_longname;
     }
 
-    return manuf_value->resolved_longname;
+    addr[0] = (manuf_key >> 16) & 0xFF;
+    addr[1] = (manuf_key >> 8) & 0xFF;
+    addr[2] = manuf_key & 0xFF;
+
+    /* Try the global manuf tables. */
+    const char *short_name, *long_name;
+    short_name = ws_manuf_lookup_str(addr, &long_name);
+    if (short_name != NULL) {
+        /* Found it */
+        return long_name;
+    }
+
+    return NULL;
 }
 
 const gchar *
 tvb_get_manuf_name_if_known(tvbuff_t *tvb, gint offset)
 {
-    return get_manuf_name_if_known(tvb_get_ptr(tvb, offset, 3));
+    guint8 buf[6] = { 0 };
+    tvb_memcpy(tvb, buf, offset, 3);
+    return get_manuf_name_if_known(buf, sizeof(buf));
 }
 
 char* get_hash_manuf_resolved_name(hashmanuf_t* manuf)
@@ -3538,7 +3591,7 @@ eui64_to_display(wmem_allocator_t *allocator, const guint64 addr_eui64)
     /* Copy and convert the address to network byte order. */
     *(guint64 *)(void *)(addr) = pntoh64(&(addr_eui64));
 
-    manuf_value = manuf_name_lookup(addr);
+    manuf_value = manuf_name_lookup(addr, 8);
     if (!gbl_resolv_flags.mac_name || (manuf_value->status == HASHETHER_STATUS_UNRESOLVED)) {
         ret = wmem_strdup_printf(allocator, "%02x:%02x:%02x:%02x:%02x:%02x:%02x:%02x", addr[0], addr[1], addr[2], addr[3], addr[4], addr[5], addr[6], addr[7]);
     } else {

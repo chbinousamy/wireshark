@@ -56,6 +56,7 @@
            Using the Border Gateway Protocol - Link State
  * RFC8365 A Network Virtualization Overlay Solution Using Ethernet VPN (EVPN)
  * draft-abraitis-bgp-version-capability-13
+ * draft-ietf-idr-bgp-bfd-strict-mode
 
  * TODO:
  * Destination Preference Attribute for BGP (work in progress)
@@ -152,6 +153,7 @@ static dissector_handle_t bgp_handle;
 /* OPEN message Optional Parameter types  */
 #define BGP_OPTION_AUTHENTICATION    1   /* RFC1771 */
 #define BGP_OPTION_CAPABILITY        2   /* RFC2842 */
+#define BGP_OPTION_EXTENDED_LEN        255     /* RFC9072 */
 
 /* https://www.iana.org/assignments/capability-codes/capability-codes.xhtml (last updated 2018-08-21) */
 /* BGP capability code */
@@ -175,6 +177,7 @@ static dissector_handle_t bgp_handle;
 #define BGP_CAPABILITY_LONG_LIVED_GRACEFUL_RESTART  71  /* draft-uttaro-idr-bgp-persistence */
 #define BGP_CAPABILITY_CP_ORF                       72  /* [RFC7543] */
 #define BGP_CAPABILITY_FQDN                         73  /* draft-walton-bgp-hostname-capability */
+#define BGP_CAPABILITY_BFD_STRICT                   74  /* draft-ietf-idr-bgp-bfd-strict-mode */
 #define BGP_CAPABILITY_SOFT_VERSION                 75  /* draft-abraitis-bgp-version-capability */
 #define BGP_CAPABILITY_ROUTE_REFRESH_CISCO         128  /* Cisco */
 #define BGP_CAPABILITY_ORF_CISCO                   130  /* Cisco */
@@ -1137,7 +1140,7 @@ static const value_string evpn_nlri_esi_type[] = {
 #define BGP_MAJOR_ERROR_HT_EXPIRED    4
 #define BGP_MAJOR_ERROR_STATE_MACHINE 5
 #define BGP_MAJOR_ERROR_CEASE         6
-#define BGP_MAJOR_ERROR_CAP_MSG       7
+#define BGP_MAJOR_ERROR_ROUTE_REFRESH 7
 
 static const value_string bgpnotify_major[] = {
     { BGP_MAJOR_ERROR_MSG_HDR,       "Message Header Error" },
@@ -1146,7 +1149,7 @@ static const value_string bgpnotify_major[] = {
     { BGP_MAJOR_ERROR_HT_EXPIRED,    "Hold Timer Expired" },
     { BGP_MAJOR_ERROR_STATE_MACHINE, "Finite State Machine Error" },
     { BGP_MAJOR_ERROR_CEASE,         "Cease" },
-    { BGP_MAJOR_ERROR_CAP_MSG,       "CAPABILITY Message Error" },
+    { BGP_MAJOR_ERROR_ROUTE_REFRESH, "ROUTE-REFRESH Message Error" },    /* RFC 7313 - Enhanced Route Refresh Capability for BGP-4 */
     { 0, NULL }
 };
 
@@ -1217,11 +1220,9 @@ static const value_string bgpnotify_minor_cease[] = {
     { 0,                                 NULL }
 };
 
-static const value_string bgpnotify_minor_cap_msg[] = {
-    { 1, "Invalid Action Value" },
-    { 2, "Invalid Capability Length" },
-    { 3, "Malformed Capability Value" },
-    { 4, "Unsupported Capability Code" },
+/* RFC7313 - Enhanced Route Refresh Capability for BGP-4 */
+static const value_string bgpnotify_minor_rr_msg[] = {
+    { 1, "Invalid Message Length" },
     { 0, NULL }
 };
 
@@ -1235,6 +1236,7 @@ static const value_string bgpattr_origin[] = {
 static const value_string bgp_open_opt_vals[] = {
     { BGP_OPTION_AUTHENTICATION, "Authentication" },
     { BGP_OPTION_CAPABILITY, "Capability" },
+    { BGP_OPTION_EXTENDED_LEN, "Extended Length"},
     { 0, NULL }
 };
 
@@ -1771,6 +1773,7 @@ static const value_string capability_vals[] = {
     { BGP_CAPABILITY_ROUTE_REFRESH_CISCO,           "Route refresh capability (Cisco)" },
     { BGP_CAPABILITY_ORF_CISCO,                     "Cooperative route filtering capability (Cisco)" },
     { BGP_CAPABILITY_MULTISESSION_CISCO,            "Multisession BGP Capability (Cisco)" },
+    { BGP_CAPABILITY_BFD_STRICT,                    "BFD Strict-Mode capability" },
     { BGP_CAPABILITY_SOFT_VERSION,                  "Software Version Capability" },
     { 0, NULL }
 };
@@ -2068,6 +2071,9 @@ static int hf_bgp_open_myas = -1;
 static int hf_bgp_open_holdtime = -1;
 static int hf_bgp_open_identifier = -1;
 static int hf_bgp_open_opt_len = -1;
+static int hf_bgp_open_opt_extension = -1;
+static int hf_bgp_open_opt_extension_mark = -1;
+static int hf_bgp_open_opt_extension_len = -1;
 static int hf_bgp_open_opt_params = -1;
 static int hf_bgp_open_opt_param = -1;
 static int hf_bgp_open_opt_param_type = -1;
@@ -2084,7 +2090,7 @@ static int hf_bgp_notify_minor_update_msg = -1;
 static int hf_bgp_notify_minor_ht_expired = -1;
 static int hf_bgp_notify_minor_state_machine = -1;
 static int hf_bgp_notify_minor_cease = -1;
-static int hf_bgp_notify_minor_cap_msg = -1;
+static int hf_bgp_notify_minor_rr_msg = -1;
 static int hf_bgp_notify_minor_unknown = -1;
 static int hf_bgp_notify_data = -1;
 static int hf_bgp_notify_error_open_bad_peer_as = -1;
@@ -3035,6 +3041,7 @@ static gint ett_bgp_community = -1;
 static gint ett_bgp_cluster_list = -1;  /* cluster list tree          */
 static gint ett_bgp_options = -1;       /* optional parameters tree   */
 static gint ett_bgp_option = -1;        /* an optional parameter tree */
+static gint ett_bgp_options_ext = -1;
 static gint ett_bgp_cap = -1;           /* an cap parameter tree */
 static gint ett_bgp_extended_communities = -1; /* extended communities list tree */
 static gint ett_bgp_extended_community = -1; /* extended community tree for each community of BGP update */
@@ -8398,6 +8405,13 @@ dissect_bgp_capability_item(tvbuff_t *tvb, proto_tree *tree, packet_info *pinfo,
 
             break;
 
+        case BGP_CAPABILITY_BFD_STRICT:
+            if (clen != 0) {
+                expert_add_info_format(pinfo, ti_len, &ei_bgp_cap_len_bad, "Capability length %u wrong, must be = 0", clen);
+                proto_tree_add_item(cap_tree, hf_bgp_cap_unknown, tvb, offset, clen, ENC_NA);
+            }
+            offset += clen;
+            break;
         case BGP_CAPABILITY_SOFT_VERSION:{
             guint8 soft_version_len;
 
@@ -8427,7 +8441,7 @@ dissect_bgp_capability_item(tvbuff_t *tvb, proto_tree *tree, packet_info *pinfo,
 static void
 dissect_bgp_open(tvbuff_t *tvb, proto_tree *tree, packet_info *pinfo)
 {
-    guint8          optlen;    /* Option Length */
+    uint16_t        optlen;    /* Option Length */
     int             ptype;     /* parameter type        */
     int             plen;      /* parameter length      */
     int             cend;      /* capabilities end      */
@@ -8437,6 +8451,7 @@ dissect_bgp_open(tvbuff_t *tvb, proto_tree *tree, packet_info *pinfo)
     proto_item      *ti;       /* tree item             */
     proto_tree      *opt_tree;  /* subtree for options   */
     proto_tree      *par_tree;  /* subtree for par options   */
+    proto_tree      *opt_extension_tree;  /* subtree for par options   */
 
     offset = BGP_MARKER_SIZE + 2 + 1;
 
@@ -8461,7 +8476,20 @@ dissect_bgp_open(tvbuff_t *tvb, proto_tree *tree, packet_info *pinfo)
 
     /* optional parameters */
     if (optlen > 0) {
-        oend = offset + optlen;
+        ptype = tvb_get_guint8(tvb, offset);
+        if (ptype == BGP_OPTION_EXTENDED_LEN) {  /* Extended Length covered by RFC9072 */
+            optlen = tvb_get_guint16(tvb, offset+1, ENC_BIG_ENDIAN);
+
+            ti =  proto_tree_add_item(tree, hf_bgp_open_opt_extension, tvb, offset, 3, ENC_NA);
+            opt_extension_tree = proto_item_add_subtree(ti, ett_bgp_options_ext);
+            proto_tree_add_item(opt_extension_tree, hf_bgp_open_opt_extension_mark, tvb, offset, 1, ENC_NA);
+            proto_tree_add_item(opt_extension_tree, hf_bgp_open_opt_extension_len, tvb, offset +1, 2, ENC_BIG_ENDIAN);
+
+            oend = offset + 3 + optlen;
+            offset += 3;
+        } else {
+            oend = offset + optlen;
+        }
 
         /* add a subtree */
         ti = proto_tree_add_item(tree, hf_bgp_open_opt_params, tvb, offset, optlen, ENC_NA);
@@ -11008,8 +11036,8 @@ dissect_bgp_notification(tvbuff_t *tvb, proto_tree *tree, packet_info *pinfo)
         case BGP_MAJOR_ERROR_CEASE:
             proto_tree_add_item(tree, hf_bgp_notify_minor_cease, tvb, offset, 1, ENC_BIG_ENDIAN);
         break;
-        case BGP_MAJOR_ERROR_CAP_MSG:
-            proto_tree_add_item(tree, hf_bgp_notify_minor_cap_msg, tvb, offset, 1, ENC_BIG_ENDIAN);
+        case BGP_MAJOR_ERROR_ROUTE_REFRESH:
+            proto_tree_add_item(tree, hf_bgp_notify_minor_rr_msg, tvb, offset, 1, ENC_BIG_ENDIAN);
         break;
         default:
             ti = proto_tree_add_item(tree, hf_bgp_notify_minor_unknown, tvb, offset, 1, ENC_BIG_ENDIAN);
@@ -11409,6 +11437,15 @@ proto_register_bgp(void)
       { &hf_bgp_open_opt_len,
         { "Optional Parameters Length", "bgp.open.opt.len", FT_UINT8, BASE_DEC,
           NULL, 0x0, "The total length of the Optional Parameters field in octets", HFILL }},
+      { &hf_bgp_open_opt_extension,
+        { "Optional Parameter Extension", "bgp.open.opt.extension", FT_NONE, BASE_NONE,
+          NULL, 0x0, "Optional Parameters Extension detected", HFILL }},
+      { &hf_bgp_open_opt_extension_mark,
+        { "Extension Mark", "bgp.open.opt.extension.mark", FT_UINT8, BASE_DEC,
+          NULL, 0x0, "Optional Parameters Extension detected", HFILL }},
+      { &hf_bgp_open_opt_extension_len,
+        { "Extended Length", "bgp.open.opt.extension_len", FT_UINT16, BASE_DEC,
+          NULL, 0x0, "The total extended length of the Optional Parameters field in octets", HFILL }},
       { &hf_bgp_open_opt_params,
         { "Optional Parameters", "bgp.open.opt", FT_NONE, BASE_NONE,
           NULL, 0x0, "List of optional parameters", HFILL }},
@@ -11449,9 +11486,9 @@ proto_register_bgp(void)
       { &hf_bgp_notify_minor_cease,
         { "Minor error Code (Cease)", "bgp.notify.minor_error_cease", FT_UINT8, BASE_DEC,
           VALS(bgpnotify_minor_cease), 0x0, NULL, HFILL }},
-      { &hf_bgp_notify_minor_cap_msg,
-        { "Minor error Code (Capability Message)", "bgp.notify.minor_error_capability", FT_UINT8, BASE_DEC,
-          VALS(bgpnotify_minor_cap_msg), 0x0, NULL, HFILL }},
+      { &hf_bgp_notify_minor_rr_msg,
+        { "Minor error Code (Route-Refresh message)", "bgp.notify.minor_error_route_refresh", FT_UINT8, BASE_DEC,
+          VALS(bgpnotify_minor_rr_msg), 0x0, NULL, HFILL }},
       { &hf_bgp_notify_minor_unknown,
         { "Minor error Code (Unknown)", "bgp.notify.minor_error_unknown", FT_UINT8, BASE_DEC,
           NULL, 0x0, NULL, HFILL }},
@@ -13955,6 +13992,7 @@ proto_register_bgp(void)
       &ett_bgp_cluster_list,
       &ett_bgp_options,
       &ett_bgp_option,
+      &ett_bgp_options_ext,
       &ett_bgp_cap,
       &ett_bgp_extended_communities,
       &ett_bgp_extended_community,

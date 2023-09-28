@@ -321,12 +321,23 @@ extern "C" {
 /* timestamp precision (currently only these values are supported) */
 #define WTAP_TSPREC_UNKNOWN    -2
 #define WTAP_TSPREC_PER_PACKET -1  /* as a per-file value, means per-packet */
-#define WTAP_TSPREC_SEC         WS_TSPREC_SEC
-#define WTAP_TSPREC_DSEC        WS_TSPREC_100_MSEC
-#define WTAP_TSPREC_CSEC        WS_TSPREC_10_MSEC
-#define WTAP_TSPREC_MSEC        WS_TSPREC_MSEC
-#define WTAP_TSPREC_USEC        WS_TSPREC_USEC
-#define WTAP_TSPREC_NSEC        WS_TSPREC_NSEC
+/*
+ * These values are the number of digits of precision after the integral part.
+ * Thry're the same as WS_TSPREC values; we define them here so that
+ * tools/make-enums.py sees them.
+ */
+#define WTAP_TSPREC_SEC         0
+#define WTAP_TSPREC_100_MSEC    1
+#define WTAP_TSPREC_DSEC        1 /* Backwards compatibility */
+#define WTAP_TSPREC_10_MSEC     2
+#define WTAP_TSPREC_CSEC        2 /* Backwards compatibility */
+#define WTAP_TSPREC_MSEC        3
+#define WTAP_TSPREC_100_USEC    4
+#define WTAP_TSPREC_10_USEC     5
+#define WTAP_TSPREC_USEC        6
+#define WTAP_TSPREC_100_NSEC    7
+#define WTAP_TSPREC_10_NSEC     8
+#define WTAP_TSPREC_NSEC        9
 /* if you add to the above, update wtap_tsprec_string() */
 
 /*
@@ -1486,6 +1497,9 @@ typedef struct wtap_dump_params {
     const GArray *dsbs_growing;             /**< DSBs that will be written while writing packets, or NULL.
                                                  This array may grow since the dumper was opened and will subsequently
                                                  be written before newer packets are written in wtap_dump. */
+    const GArray *sysdig_mev_growing;       /**< Meta events that will be written while writing packets, or NULL.
+                                                 This array may grow since the dumper was opened and will subsequently
+                                                 be written before newer packets are written in wtap_dump. */
     gboolean    dont_copy_idbs;             /**< XXX - don't copy IDBs; this should eventually always be the case. */
 } wtap_dump_params;
 
@@ -1830,6 +1844,13 @@ void wtap_set_cb_new_ipv6(wtap *wth, wtap_new_ipv6_callback_t add_new_ipv6);
 typedef void (*wtap_new_secrets_callback_t)(guint32 secrets_type, const void *secrets, guint size);
 WS_DLL_PUBLIC
 void wtap_set_cb_new_secrets(wtap *wth, wtap_new_secrets_callback_t add_new_secrets);
+
+/**
+ * Set callback function to receive new sysdig meta events. Currently pcapng-only.
+ */
+typedef void (*wtap_new_sysdig_meta_event_callback_t)(uint32_t mev_type, const uint8_t *mev_data, unsigned mev_data_size);
+WS_DLL_PUBLIC
+void wtap_set_cb_new_sysdig_meta_event(wtap *wth, wtap_new_sysdig_meta_event_callback_t add_new_sysdig_meta_event);
 
 /** Read the next record in the file, filling in *phdr and *buf.
  *

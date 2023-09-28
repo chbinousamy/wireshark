@@ -221,6 +221,26 @@ wtap_file_discard_decryption_secrets(wtap *wth)
 }
 
 void
+wtap_file_add_sysdig_meta_event(wtap *wth, const wtap_block_t mev)
+{
+	if (!wth->sysdig_meta_events) {
+		wth->sysdig_meta_events = g_array_new(FALSE, FALSE, sizeof(wtap_block_t));
+	}
+	g_array_append_val(wth->sysdig_meta_events, mev);
+}
+
+gboolean
+wtap_file_discard_sysdig_meta_events(wtap *wth)
+{
+	if (!wth->sysdig_meta_events || wth->sysdig_meta_events->len == 0)
+		return false;
+
+	wtap_block_array_free(wth->sysdig_meta_events);
+	wth->sysdig_meta_events = NULL;
+	return true;
+}
+
+void
 wtap_add_idb(wtap *wth, wtap_block_t idb)
 {
 	g_array_append_val(wth->interface_data, idb);
@@ -241,46 +261,31 @@ wtap_generate_idb(int encap, int tsprec, int snaplen)
 	if_descr_mand = (wtapng_if_descr_mandatory_t*)wtap_block_get_mandatory_data(idb);
 	if_descr_mand->wtap_encap = encap;
 	if_descr_mand->tsprecision = tsprec;
-	switch (tsprec) {
-
-	case WTAP_TSPREC_SEC:
-		if_descr_mand->time_units_per_second = 1;
-		wtap_block_add_uint8_option(idb, OPT_IDB_TSRESOL, 0);
-		break;
-
-	case WTAP_TSPREC_DSEC:
-		if_descr_mand->time_units_per_second = 10;
-		wtap_block_add_uint8_option(idb, OPT_IDB_TSRESOL, 1);
-		break;
-
-	case WTAP_TSPREC_CSEC:
-		if_descr_mand->time_units_per_second = 100;
-		wtap_block_add_uint8_option(idb, OPT_IDB_TSRESOL, 2);
-		break;
-
-	case WTAP_TSPREC_MSEC:
-		if_descr_mand->time_units_per_second = 1000;
-		wtap_block_add_uint8_option(idb, OPT_IDB_TSRESOL, 3);
-		break;
-
-	case WTAP_TSPREC_USEC:
-		if_descr_mand->time_units_per_second = 1000000;
-		/* This is the default, so no need to add an option */
-		break;
-
-	case WTAP_TSPREC_NSEC:
-		if_descr_mand->time_units_per_second = 1000000000;
-		wtap_block_add_uint8_option(idb, OPT_IDB_TSRESOL, 9);
-		break;
-
-	case WTAP_TSPREC_PER_PACKET:
-	case WTAP_TSPREC_UNKNOWN:
-	default:
+	if (tsprec < 0 || tsprec > WS_TSPREC_MAX) {
 		/*
-		 * No timestamp precision.
+		 * Either WTAP_TSPREC_PER_PACKET, WTAP_TSPREC_UNKNOWN,
+		 * or not a valid WTAP_TSPREC_ value.
+		 *
+		 * Unknown timestamp precision; use the default of
+		 * microsecond resolution.
 		 */
-		if_descr_mand->time_units_per_second = 1000000; /* default microsecond resolution */
-		break;
+		tsprec = 6;	/* microsecond resolution */
+	}
+
+	/*
+	 * Compute 10^{params->tsprec}.
+	 */
+	if_descr_mand->time_units_per_second = 1;
+	for (int i = 0; i < tsprec; i++)
+		if_descr_mand->time_units_per_second *= 10;
+
+	if (tsprec != WTAP_TSPREC_USEC) {
+		/*
+		 * Microsecond precision is the default, so we only
+		 * add an option if the precision isn't microsecond
+		 * precision.
+		 */
+		wtap_block_add_uint8_option(idb, OPT_IDB_TSRESOL, tsprec);
 	}
 	if (snaplen == 0) {
 		/*
@@ -512,6 +517,7 @@ wtap_dump_params_init(wtap_dump_params *params, wtap *wth)
 	 * as they become available. */
 	params->nrbs_growing = wth->nrbs;
 	params->dsbs_growing = wth->dsbs;
+	params->sysdig_mev_growing = wth->sysdig_meta_events;
 	params->dont_copy_idbs = FALSE;
 }
 
@@ -550,6 +556,12 @@ wtap_dump_params_discard_decryption_secrets(wtap_dump_params *params)
 {
 	params->dsbs_initial = NULL;
 	params->dsbs_growing = NULL;
+}
+
+void
+wtap_dump_params_discard_sysdig_meta_events(wtap_dump_params *params)
+{
+	params->sysdig_mev_growing = NULL;
 }
 
 void
@@ -1330,37 +1342,34 @@ wtap_name_to_encap(const char *name)
 	return -1;	/* no such encapsulation type */
 }
 
+/*
+ * For precision values that correspond to a specific precision.
+ */
+static const char *precnames[NUM_WS_TSPREC_VALS] = {
+	"seconds",
+	"100 milliseconds (deciseconds)",
+	"10 milliseconds (centiseconds)",
+	"milliseconds",
+	"100 microseconds",
+	"10 microseconds",
+	"microseconds",
+	"100 nanoseconds",
+	"10 nanoseconds",
+	"nanoseconds",
+};
+
 const char*
 wtap_tsprec_string(int tsprec)
 {
 	const char* s;
-	switch (tsprec) {
-		case WTAP_TSPREC_PER_PACKET:
-			s = "per-packet";
-			break;
-		case WTAP_TSPREC_SEC:
-			s = "seconds";
-			break;
-		case WTAP_TSPREC_DSEC:
-			s = "deciseconds";
-			break;
-		case WTAP_TSPREC_CSEC:
-			s = "centiseconds";
-			break;
-		case WTAP_TSPREC_MSEC:
-			s = "milliseconds";
-			break;
-		case WTAP_TSPREC_USEC:
-			s = "microseconds";
-			break;
-		case WTAP_TSPREC_NSEC:
-			s = "nanoseconds";
-			break;
-		case WTAP_TSPREC_UNKNOWN:
-		default:
-			s = "UNKNOWN";
-			break;
-	}
+	if (tsprec == WTAP_TSPREC_PER_PACKET)
+		s = "per-packet";
+	else if (tsprec >= 0 && tsprec < NUM_WS_TSPREC_VALS)
+		s = precnames[tsprec];
+	else if (tsprec == WTAP_TSPREC_UNKNOWN)
+		s = "UNKNOWN";
+	else
+		s = "INVALID";
 	return s;
 }
 
@@ -1532,6 +1541,7 @@ wtap_close(wtap *wth)
 	wtap_block_array_free(wth->nrbs);
 	wtap_block_array_free(wth->interface_data);
 	wtap_block_array_free(wth->dsbs);
+	wtap_block_array_free(wth->sysdig_meta_events);
 
 	g_free(wth);
 }
@@ -1639,6 +1649,15 @@ wtapng_process_dsb(wtap *wth, wtap_block_t dsb)
 
 	if (wth->add_new_secrets)
 		wth->add_new_secrets(dsb_mand->secrets_type, dsb_mand->secrets_data, dsb_mand->secrets_len);
+}
+
+void
+wtapng_process_sysdig_meta_event(wtap *wth, wtap_block_t mev)
+{
+	const wtapng_sysdig_mev_mandatory_t *mev_mand = (wtapng_sysdig_mev_mandatory_t*)wtap_block_get_mandatory_data(mev);
+
+	if (wth->add_new_sysdig_meta_event)
+		wth->add_new_sysdig_meta_event(mev_mand->mev_type, mev_mand->mev_data, mev_mand->mev_data_len);
 }
 
 /* Perform per-packet initialization */

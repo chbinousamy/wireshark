@@ -309,9 +309,6 @@ static gboolean desegment_rtp = TRUE;
 
 static gboolean rfc2198_deencapsulate = TRUE;
 
-/* Proto data key values */
-#define RTP_CONVERSATION_PROTO_DATA     0
-#define RTP_DECODE_AS_PROTO_DATA        1
 
 
 /*
@@ -1585,6 +1582,7 @@ dissect_rtp_data(tvbuff_t *tvb, packet_info *pinfo, proto_tree *tree,
     rtp_private_conv_info *finfo = NULL;
     rtp_multisegment_pdu *msp;
     guint32 seqno;
+    guint16 save_can_desegment;
 
     /* Retrieve RTPs idea of a conversation */
     p_packet_data = (struct _rtp_packet_info *)p_get_proto_data(wmem_file_scope(), pinfo, proto_rtp, RTP_CONVERSATION_PROTO_DATA);
@@ -1601,6 +1599,10 @@ dissect_rtp_data(tvbuff_t *tvb, packet_info *pinfo, proto_tree *tree,
 
     seqno = p_packet_data->extended_seqno;
 
+    /* Preserve the current desegmentation ability in case this is
+     * RTP encapsulated in TCP (RFC 4571).
+     */
+    save_can_desegment = pinfo->can_desegment;
     pinfo->can_desegment = 2;
     pinfo->desegment_offset = 0;
     pinfo->desegment_len = 0;
@@ -1766,7 +1768,8 @@ dissect_rtp_data(tvbuff_t *tvb, packet_info *pinfo, proto_tree *tree,
         }
     }
 
-    pinfo->can_desegment = 0;
+    /* Restore desegmentation ability */
+    pinfo->can_desegment = save_can_desegment;
     pinfo->desegment_offset = 0;
     pinfo->desegment_len = 0;
 }
@@ -2102,9 +2105,6 @@ dissect_rtp( tvbuff_t *tvb, packet_info *pinfo, proto_tree *tree, void *data _U_
     /*struct srtp_info *srtp_info = NULL;*/
     /*unsigned int srtp_offset;*/
     const char   *pt = NULL;
-    /* Can tap up to 4 RTP packets within same packet */
-    static struct _rtp_info rtp_info_arr[4];
-    static int rtp_info_current = 0;
     struct _rtp_info *rtp_info;
     static int * const octet1_fields[] = {
         &hf_rtp_version,
@@ -2113,12 +2113,6 @@ dissect_rtp( tvbuff_t *tvb, packet_info *pinfo, proto_tree *tree, void *data _U_
         &hf_rtp_csrc_count,
         NULL
     };
-
-    rtp_info_current++;
-    if (rtp_info_current == 4) {
-        rtp_info_current = 0;
-    }
-    rtp_info = &rtp_info_arr[rtp_info_current];
 
     /* Get the fields in the first octet */
     octet1 = tvb_get_guint8( tvb, offset );
@@ -2221,6 +2215,7 @@ dissect_rtp( tvbuff_t *tvb, packet_info *pinfo, proto_tree *tree, void *data _U_
     }
 
     /* fill in the rtp_info structure */
+    rtp_info = wmem_new0(pinfo->pool, struct _rtp_info);
     rtp_info->info_version = version;
     if (version != 2) {
         /*
@@ -2269,7 +2264,6 @@ dissect_rtp( tvbuff_t *tvb, packet_info *pinfo, proto_tree *tree, void *data _U_
 
     /* fill in the rtp_info structure */
     rtp_info->info_padding_set = padding_set;
-    rtp_info->info_padding_count = 0;
     rtp_info->info_marker_set = marker_set;
     rtp_info->info_media_types = 0;
     rtp_info->info_payload_type = payload_type;
@@ -2535,25 +2529,28 @@ dissect_rtp( tvbuff_t *tvb, packet_info *pinfo, proto_tree *tree, void *data _U_
             tvb_reported_length_remaining( tvb, offset ) - padding_count;
 
         rtp_info->info_payload_offset = offset;
-        rtp_info->info_payload_len = tvb_captured_length_remaining(tvb, offset);
-        rtp_info->info_padding_count = padding_count;
 
         if (p_packet_data && p_packet_data->bta2dp_info) {
             if (p_packet_data->bta2dp_info->codec_dissector == sbc_handle) {
                 rtp_info->info_payload_offset += 1;
-                rtp_info->info_payload_len -= 1;
             }
 
             if (p_packet_data->bta2dp_info->content_protection_type == BTAVDTP_CONTENT_PROTECTION_TYPE_SCMS_T) {
                 rtp_info->info_payload_offset += 1;
-                rtp_info->info_payload_len -= 1;
             }
         }
 
         if (p_packet_data && p_packet_data->btvdp_info &&
                 p_packet_data->btvdp_info->content_protection_type == BTAVDTP_CONTENT_PROTECTION_TYPE_SCMS_T) {
             rtp_info->info_payload_offset += 1;
-            rtp_info->info_payload_len -= 1;
+        }
+
+        rtp_info->info_payload_len = tvb_reported_length_remaining(tvb, rtp_info->info_payload_offset);
+
+        if (rtp_info->info_payload_len > padding_count) {
+            rtp_info->info_payload_len -= padding_count;
+        } else {
+            rtp_info->info_payload_len = 0;
         }
 
         if (data_len > 0) {
@@ -2727,7 +2724,6 @@ dissect_rtp_shim_header(tvbuff_t *tvb, gint start, packet_info *pinfo _U_, proto
     /* fill in the rtp_info structure */
     if (rtp_info) {
         rtp_info->info_padding_set = padding_set;
-        rtp_info->info_padding_count = 0;
         rtp_info->info_marker_set = marker_set;
         rtp_info->info_media_types = 0;
         rtp_info->info_payload_type = payload_type;

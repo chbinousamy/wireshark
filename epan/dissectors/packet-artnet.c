@@ -4640,7 +4640,7 @@ dissect_artnet_poll_reply(tvbuff_t *tvb, guint offset, proto_tree *tree, packet_
   DISSECTOR_ASSERT(regex != NULL);
   g_regex_match(
     regex,
-    (const gchar*)tvb_get_string_enc(wmem_packet_scope(), tvb, offset, 64, ENC_ASCII),
+    (const gchar*)tvb_get_string_enc(pinfo->pool, tvb, offset, 64, ENC_ASCII),
     (GRegexMatchFlags) 0,
     &match_info);
 
@@ -8031,7 +8031,7 @@ proto_register_artnet(void) {
     { &hf_artnet_input_input_disabled,
       { "Disabled",
       "artnet.input.disabled",
-      FT_BOOLEAN, 8, TFS(&tfs_true_false), 0x00,
+      FT_BOOLEAN, 8, NULL, 0x00,
       NULL, HFILL }},
 
     /* ArtFirmwareMaster */

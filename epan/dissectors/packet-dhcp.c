@@ -1716,7 +1716,7 @@ static void* uat_dhcp_record_copy_cb(void* n, const void* o, size_t siz _U_) {
 	return new_record;
 }
 
-static gboolean uat_dhcp_record_update_cb(void* r, char** err) {
+static bool uat_dhcp_record_update_cb(void* r, char** err) {
 	uat_dhcp_record_t* rec = (uat_dhcp_record_t *)r;
 
 	if ((rec->opt == 0) || (rec->opt >=DHCP_OPT_NUM-1)) {
@@ -6327,7 +6327,7 @@ dissect_docsis_cm_cap(packet_info *pinfo, proto_tree *v_tree, tvbuff_t *tvb, int
 	guint8	   *val_other  = NULL;
 	guint	    off	       = voff;
 
-	asc_val = (guint8*)wmem_alloc0(wmem_packet_scope(), 4);
+	asc_val = (guint8*)wmem_alloc0(pinfo->pool, 4);
 
 	if (opt125)
 	{
@@ -8058,7 +8058,7 @@ proto_register_dhcp(void)
 
 		{ &hf_dhcp_option_value_boolean,
 		  { "Value", "dhcp.option.value.bool",
-		    FT_BOOLEAN, BASE_NONE, TFS(&tfs_true_false), 0x00,
+		    FT_BOOLEAN, BASE_NONE, NULL, 0x00,
 		    "Boolean DHCP/BOOTP option value", HFILL }},
 
 		{ &hf_dhcp_option_padding,
@@ -8946,7 +8946,7 @@ proto_register_dhcp(void)
 
 		{ &hf_dhcp_option63_value_boolean,
 		  { "Value", "dhcp.option.novell_options.value.bool",
-		    FT_BOOLEAN, BASE_NONE, TFS(&tfs_true_false), 0x00,
+		    FT_BOOLEAN, BASE_NONE, NULL, 0x00,
 		    "Option 63: Suboption Boolean value", HFILL }},
 
 		{ &hf_dhcp_option63_broadcast,

@@ -13858,6 +13858,22 @@ a:hover {
         <translation type="unfinished"></translation>
     </message>
     <message>
+        <source>Tenths of a millisecond</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Hundredths of a millisecond</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Tenths of a microsecond</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Hundredths of a microsecond</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
         <source>Packet &amp;Diagram</source>
         <translation>分组图(&amp;D)</translation>
     </message>
@@ -14876,6 +14892,10 @@ a:hover {
     </message>
     <message>
         <source>Please wait while Wireshark is initializing…</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source> before updating</source>
         <translation type="unfinished"></translation>
     </message>
     <message>

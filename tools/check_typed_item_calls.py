@@ -37,7 +37,7 @@ def name_has_one_of(name, substring_list):
     return False
 
 # A call is an individual call to an API we are interested in.
-# Internal to APICheck below.
+# Used by APICheck below.
 class Call:
     def __init__(self, hf_name, macros, line_number=None, length=None, fields=None):
         self.hf_name = hf_name
@@ -228,7 +228,7 @@ class APICheck:
                     warnings_found += 1
 
 
-
+# Specialization of APICheck for add_item() calls
 class ProtoTreeAddItemCheck(APICheck):
     def __init__(self, ptv=None):
 
@@ -366,7 +366,8 @@ known_non_contiguous_fields = { 'wlan.fixed.capabilities.cfpoll.sta',
                                 'xmcp.type.class',
                                 'xmcp.type.method',
                                 'hf_hiqnet_flags',
-                                'hf_hiqnet_flagmask'
+                                'hf_hiqnet_flagmask',
+                                'hf_h223_mux_mpl'
                               }
 ##################################################################################################
 
@@ -392,6 +393,7 @@ field_widths = {
     'FT_INT64'   : 64
 }
 
+# TODO: most of these might as well be strings...
 def is_ignored_consecutive_filter(filter):
     ignore_patterns = [
         re.compile(r'^elf.sh_type'),
@@ -597,8 +599,27 @@ class ValueString:
             last_val =  list(self.parsed_vals)[-1]
             if not first_val in matching_label_entries or not last_val in matching_label_entries:
                 return
-
             print('Warning:', self.file, ': value_string', self.name, 'Labels match value except for 1!', matching_label_entries, num_items, self)
+
+        # Do all labels start with lower-or-upper char?
+        startLower,startUpper = 0,0
+        for val in self.parsed_vals:
+            first_letter = self.parsed_vals[val][1]
+            if first_letter.isalpha():
+                if first_letter.isupper():
+                    startUpper += 1
+                else:
+                    startLower += 1
+        if startLower > 0 and startUpper > 0:
+            if startLower+startUpper > 10 and (startLower <=3 or startUpper <=3):
+                standouts = []
+                if startLower < startUpper:
+                    standouts += [self.parsed_vals[val] for val in self.parsed_vals if self.parsed_vals[val][1].islower()]
+                if startLower > startUpper:
+                    standouts += [self.parsed_vals[val] for val in self.parsed_vals if self.parsed_vals[val][1].isupper()]
+
+                print('Note:', self.file, ': value_string', self.name, 'mix of upper', startUpper, 'and lower', startLower, standouts)
+
 
     def __str__(self):
         return  self.name + '= { ' + self.raw_vals + ' }'
@@ -634,13 +655,15 @@ class Item:
 
     previousItem = None
 
-    def __init__(self, filename, hf, filter, label, item_type, display, strings, macros, mask=None,
-                 check_mask=False, mask_exact_width=False, check_label=False, check_consecutive=False, blurb=''):
+    def __init__(self, filename, hf, filter, label, item_type, display, strings, macros, value_strings,
+                 mask=None, check_mask=False, mask_exact_width=False, check_label=False,
+                 check_consecutive=False, blurb=''):
         self.filename = filename
         self.hf = hf
         self.filter = filter
         self.label = label
         self.mask = mask
+        self.strings = strings
         self.mask_exact_width = mask_exact_width
 
         global warnings_found
@@ -667,9 +690,10 @@ class Item:
 
         # Optionally check that mask bits are contiguous
         if check_mask:
-            if self.mask_read and not mask in { 'NULL', '0x0', '0', '0x00'}:
+            if self.mask_read and not mask in { 'NULL', '0x0', '0', '0x00' }:
                 self.check_contiguous_bits(mask)
                 self.check_num_digits(self.mask)
+                # N.B., if last entry in set is removed, see around 18,000 warnings
                 self.check_digits_all_zeros(self.mask)
 
         # N.B. these checks are already done by checkApis.pl
@@ -681,6 +705,15 @@ class Item:
         if strings.find('VALS_EXT_PTR') != -1 and display.find('BASE_EXT_STRING') == -1:
             print('Warning: ' + filename, hf, 'filter "' + filter + ' strings has VALS_EXT_PTR but display lacks BASE_EXT_STRING')
             warnings_found += 1
+
+        # For VALS, lookup the corresponding ValueString and try to check range.
+        vs_re = re.compile(r'VALS\(([a-zA-Z0-9_]*)\)')
+        m = vs_re.search(strings)
+        if m:
+            self.vs_name = m.group(1)
+            if self.vs_name in value_strings:
+                vs = value_strings[self.vs_name]
+                self.check_value_string_range(vs.min_value, vs.max_value)
 
 
     def __str__(self):
@@ -733,6 +766,25 @@ class Item:
             self.mask_read = False
             self.mask_value = 0
 
+    def check_value_string_range(self, vs_min, vs_max):
+        # N,B, this doesn't reduce bit count when a mask is set!
+        item_width = self.get_field_width_in_bits()
+        if self.mask_value > 0:
+            # Have mask, so count number of bits set.
+            item_width = 0
+            for n in range(0,63):
+                item_width += 1 if self.check_bit(self.mask_value, n) else 0
+
+        if item_width is None:
+            # Type field defined by macro?
+            return
+        item_max = (2 ** item_width) - 1
+        if vs_max > item_max:
+            global warnings_found
+            print('Warning:', self.filename, self.hf, 'filter=', self.filter,
+                  self.strings, "has max value", vs_max, '(' + hex(vs_max) + ')', "which doesn't fit into", item_width, 'bits',
+                  '( mask is', hex(self.mask_value), ')')
+            warnings_found += 1
 
     # Return true if bit position n is set in value.
     def check_bit(self, value, n):
@@ -741,7 +793,7 @@ class Item:
     # Output a warning if non-contigous bits are found in the mask (guint64).
     # Note that this legimately happens in several dissectors where multiple reserved/unassigned
     # bits are conflated into one field.
-    # TODO: there is probably a cool/efficient way to check this?
+    # TODO: there is probably a cool/efficient way to check this (+1 => 1-bit set?)
     def check_contiguous_bits(self, mask):
         if not self.mask_value:
             return
@@ -824,38 +876,39 @@ class Item:
         if mask.startswith('0x') and len(mask) > 3:
             global warnings_found
             global errors_found
-            # Warn if odd number of digits/  TODO: only if >= 5?
+
+            width_in_bits = self.get_field_width_in_bits()
+            # Warn if odd number of digits.  TODO: only if >= 5?
             if len(mask) % 2  and self.item_type != 'FT_BOOLEAN':
                 print('Warning:', self.filename, self.hf, 'filter=', self.filter, ' - mask has odd number of digits', mask,
-                      'expected max for', self.item_type, 'is', int((self.get_field_width_in_bits())/4))
+                      'expected max for', self.item_type, 'is', int(width_in_bits/4))
                 warnings_found += 1
 
             if self.item_type in field_widths:
                 # Longer than it should be?
-                width_in_bits = self.get_field_width_in_bits()
                 if width_in_bits is None:
                     return
                 if len(mask)-2 > width_in_bits/4:
-                    extra_digits = mask[2:2+(len(mask)-2 - int(self.get_field_width_in_bits()/4))]
+                    extra_digits = mask[2:2+(len(mask)-2 - int(width_in_bits/4))]
                     # Its definitely an error if any of these are non-zero, as they won't have any effect!
                     if extra_digits != '0'*len(extra_digits):
                         print('Error:', self.filename, self.hf, 'filter=', self.filter, 'mask', self.mask, "with len is", len(mask)-2,
-                              "but type", self.item_type, " indicates max of", int(self.get_field_width_in_bits()/4),
+                              "but type", self.item_type, " indicates max of", int(width_in_bits/4),
                               "and extra digits are non-zero (" + extra_digits + ")")
                         errors_found += 1
                     else:
                         # Has extra leading zeros, still confusing, so warn.
                         print('Warning:', self.filename, self.hf, 'filter=', self.filter, 'mask', self.mask, "with len", len(mask)-2,
-                              "but type", self.item_type, " indicates max of", int(self.get_field_width_in_bits()/4))
+                              "but type", self.item_type, " indicates max of", int(width_in_bits/4))
                         warnings_found += 1
 
                 # Strict/fussy check - expecting mask length to match field width exactly!
                 # Currently only doing for FT_BOOLEAN, and don't expect to be in full for 64-bit fields!
                 if self.mask_exact_width:
-                    ideal_mask_width = int(self.get_field_width_in_bits()/4)
+                    ideal_mask_width = int(width_in_bits/4)
                     if self.item_type == 'FT_BOOLEAN' and ideal_mask_width < 16 and len(mask)-2 != ideal_mask_width:
                         print('Warning:', self.filename, self.hf, 'filter=', self.filter, 'mask', self.mask, "with len", len(mask)-2,
-                                "but type", self.item_type, "|", self.display,  " indicates should be", int(self.get_field_width_in_bits()/4))
+                                "but type", self.item_type, "|", self.display,  " indicates should be", int(width_in_bits/4))
                         warnings_found += 1
 
             else:
@@ -1142,7 +1195,8 @@ def find_macros(filename):
 
 
 # Look for hf items (i.e. full item to be registered) in a dissector file.
-def find_items(filename, macros, check_mask=False, mask_exact_width=False, check_label=False, check_consecutive=False):
+def find_items(filename, macros, value_strings,
+               check_mask=False, mask_exact_width=False, check_label=False, check_consecutive=False):
     is_generated = isGeneratedFile(filename)
     items = {}
     with open(filename, 'r', encoding="utf8") as f:
@@ -1166,6 +1220,7 @@ def find_items(filename, macros, check_mask=False, mask_exact_width=False, check
                              display=m.group(5),
                              strings=m.group(6),
                              macros=macros,
+                             value_strings=value_strings,
                              mask=m.group(7),
                              blurb=blurb,
                              check_mask=check_mask,
@@ -1303,8 +1358,16 @@ def checkFile(filename, check_mask=False, mask_exact_width=False, check_label=Fa
     # Find simple macros so can substitute into items and calls.
     macros = find_macros(filename)
 
+    # Find (and sanity-check) value_strings
+    value_strings = findValueStrings(filename, macros, do_extra_checks=extra_value_string_checks)
+    if extra_value_string_checks:
+        for name in value_strings:
+            value_strings[name].extraChecks()
+
+
     # Find important parts of items.
-    items_defined = find_items(filename, macros, check_mask, mask_exact_width, check_label, check_consecutive)
+    items_defined = find_items(filename, macros, value_strings,
+                               check_mask, mask_exact_width, check_label, check_consecutive)
     items_extern_declared = {}
 
     items_declared = {}
@@ -1326,12 +1389,6 @@ def checkFile(filename, check_mask=False, mask_exact_width=False, check_label=Fa
     field_arrays = {}
     if check_bitmask_fields:
         field_arrays = find_field_arrays(filename, fields, items_defined)
-
-    # Find (and sanity-check) value_strings
-    value_strings = findValueStrings(filename, macros, do_extra_checks=extra_value_string_checks)
-    if extra_value_string_checks:
-        for name in value_strings:
-            value_strings[name].extraChecks()
 
     if check_mask and check_bitmask_fields:
         for i in items_defined:

@@ -70,6 +70,7 @@
 
 #include <wsutil/report_message.h>
 #include <wsutil/str_util.h>
+#include <wsutil/to_str.h>
 #include <wsutil/file_util.h>
 #include <wsutil/ws_assert.h>
 #include <wsutil/wslog.h>
@@ -316,7 +317,7 @@ absolute_time_string(nstime_t *timer, int tsprecision, capture_info *cf_info)
      *    GMT 15:30:08, Sunday, 4th December, 292,277,026,596.
      *
      * So, if we're displaying the time as YYYY-MM-DD HH:MM:SS.SSSSSSSSS,
-     * we'll have the buffer be large enouth for a date of the format
+     * we'll have the buffer be large enough for a date of the format
      * 292277026596-MM-DD HH:MM:SS.SSSSSSSSS, which is the biggest value
      * you'll get with a 64-bit time_t and a nanosecond-resolution
      * fraction-of-a-second.
@@ -335,160 +336,16 @@ absolute_time_string(nstime_t *timer, int tsprecision, capture_info *cf_info)
      * So we go with 39.
      */
     static gchar time_string_buf[39];
-    struct tm *ti_tm;
 
     if (cf_info->times_known && cf_info->packet_count > 0) {
         if (time_as_secs) {
-            switch (tsprecision) {
-
-                case WTAP_TSPREC_SEC:
-                    snprintf(time_string_buf, sizeof time_string_buf,
-                            "%"PRId64,
-                            (gint64)timer->secs);
-                    break;
-
-                case WTAP_TSPREC_DSEC:
-                    snprintf(time_string_buf, sizeof time_string_buf,
-                            "%"PRId64"%s%01d",
-                            (gint64)timer->secs,
-                            decimal_point,
-                            timer->nsecs / 100000000);
-                    break;
-
-                case WTAP_TSPREC_CSEC:
-                    snprintf(time_string_buf, sizeof time_string_buf,
-                            "%"PRId64"%s%02d",
-                            (gint64)timer->secs,
-                            decimal_point,
-                            timer->nsecs / 10000000);
-                    break;
-
-                case WTAP_TSPREC_MSEC:
-                    snprintf(time_string_buf, sizeof time_string_buf,
-                            "%"PRId64"%s%03d",
-                            (gint64)timer->secs,
-                            decimal_point,
-                            timer->nsecs / 1000000);
-                    break;
-
-                case WTAP_TSPREC_USEC:
-                    snprintf(time_string_buf, sizeof time_string_buf,
-                            "%"PRId64"%s%06d",
-                            (gint64)timer->secs,
-                            decimal_point,
-                            timer->nsecs / 1000);
-                    break;
-
-                case WTAP_TSPREC_NSEC:
-                    snprintf(time_string_buf, sizeof time_string_buf,
-                            "%"PRId64"%s%09d",
-                            (gint64)timer->secs,
-                            decimal_point,
-                            timer->nsecs);
-                    break;
-
-                default:
-                    snprintf(time_string_buf, sizeof time_string_buf,
-                            "Unknown precision %d",
-                            tsprecision);
-                    break;
-            }
-            return time_string_buf;
+            display_epoch_time(time_string_buf, sizeof time_string_buf, timer, tsprecision);
         } else {
-            ti_tm = localtime(&timer->secs);
-            if (ti_tm == NULL) {
-                snprintf(time_string_buf, sizeof time_string_buf, "Not representable");
-                return time_string_buf;
-            }
-            switch (tsprecision) {
-
-                case WTAP_TSPREC_SEC:
-                    snprintf(time_string_buf, sizeof time_string_buf,
-                            "%04d-%02d-%02d %02d:%02d:%02d",
-                            ti_tm->tm_year + 1900,
-                            ti_tm->tm_mon + 1,
-                            ti_tm->tm_mday,
-                            ti_tm->tm_hour,
-                            ti_tm->tm_min,
-                            ti_tm->tm_sec);
-                    break;
-
-                case WTAP_TSPREC_DSEC:
-                    snprintf(time_string_buf, sizeof time_string_buf,
-                            "%04d-%02d-%02d %02d:%02d:%02d%s%01d",
-                            ti_tm->tm_year + 1900,
-                            ti_tm->tm_mon + 1,
-                            ti_tm->tm_mday,
-                            ti_tm->tm_hour,
-                            ti_tm->tm_min,
-                            ti_tm->tm_sec,
-                            decimal_point,
-                            timer->nsecs / 100000000);
-                    break;
-
-                case WTAP_TSPREC_CSEC:
-                    snprintf(time_string_buf, sizeof time_string_buf,
-                            "%04d-%02d-%02d %02d:%02d:%02d%s%02d",
-                            ti_tm->tm_year + 1900,
-                            ti_tm->tm_mon + 1,
-                            ti_tm->tm_mday,
-                            ti_tm->tm_hour,
-                            ti_tm->tm_min,
-                            ti_tm->tm_sec,
-                            decimal_point,
-                            timer->nsecs / 10000000);
-                    break;
-
-                case WTAP_TSPREC_MSEC:
-                    snprintf(time_string_buf, sizeof time_string_buf,
-                            "%04d-%02d-%02d %02d:%02d:%02d%s%03d",
-                            ti_tm->tm_year + 1900,
-                            ti_tm->tm_mon + 1,
-                            ti_tm->tm_mday,
-                            ti_tm->tm_hour,
-                            ti_tm->tm_min,
-                            ti_tm->tm_sec,
-                            decimal_point,
-                            timer->nsecs / 1000000);
-                    break;
-
-                case WTAP_TSPREC_USEC:
-                    snprintf(time_string_buf, sizeof time_string_buf,
-                            "%04d-%02d-%02d %02d:%02d:%02d%s%06d",
-                            ti_tm->tm_year + 1900,
-                            ti_tm->tm_mon + 1,
-                            ti_tm->tm_mday,
-                            ti_tm->tm_hour,
-                            ti_tm->tm_min,
-                            ti_tm->tm_sec,
-                            decimal_point,
-                            timer->nsecs / 1000);
-                    break;
-
-                case WTAP_TSPREC_NSEC:
-                    snprintf(time_string_buf, sizeof time_string_buf,
-                            "%04d-%02d-%02d %02d:%02d:%02d%s%09d",
-                            ti_tm->tm_year + 1900,
-                            ti_tm->tm_mon + 1,
-                            ti_tm->tm_mday,
-                            ti_tm->tm_hour,
-                            ti_tm->tm_min,
-                            ti_tm->tm_sec,
-                            decimal_point,
-                            timer->nsecs);
-                    break;
-
-                default:
-                    snprintf(time_string_buf, sizeof time_string_buf,
-                            "Unknown precision %d",
-                            tsprecision);
-                    break;
-            }
-            return time_string_buf;
+            format_nstime_as_iso8601(time_string_buf, sizeof time_string_buf, timer, decimal_point, TRUE, tsprecision);
         }
+    } else {
+        snprintf(time_string_buf, sizeof time_string_buf, "n/a");
     }
-
-    snprintf(time_string_buf, sizeof time_string_buf, "n/a");
     return time_string_buf;
 }
 
@@ -509,72 +366,56 @@ relative_time_string(nstime_t *timer, int tsprecision, capture_info *cf_info, gb
     static gchar  time_string_buf[39];
 
     if (cf_info->times_known && cf_info->packet_count > 0) {
-        switch (tsprecision) {
+        char *ptr;
+        size_t remaining;
+        int num_bytes;
 
-            case WTAP_TSPREC_SEC:
-                snprintf(time_string_buf, sizeof time_string_buf,
-                        "%"PRId64"%s%s",
-                        (gint64)timer->secs,
-                        second,
-                        timer->secs == 1 ? "" : plural);
-                break;
-
-            case WTAP_TSPREC_DSEC:
-                snprintf(time_string_buf, sizeof time_string_buf,
-                        "%"PRId64"%s%01d%s%s",
-                        (gint64)timer->secs,
-                        decimal_point,
-                        timer->nsecs / 100000000,
-                        second,
-                        (timer->secs == 1 && timer->nsecs == 0) ? "" : plural);
-                break;
-
-            case WTAP_TSPREC_CSEC:
-                snprintf(time_string_buf, sizeof time_string_buf,
-                        "%"PRId64"%s%02d%s%s",
-                        (gint64)timer->secs,
-                        decimal_point,
-                        timer->nsecs / 10000000,
-                        second,
-                        (timer->secs == 1 && timer->nsecs == 0) ? "" : plural);
-                break;
-
-            case WTAP_TSPREC_MSEC:
-                snprintf(time_string_buf, sizeof time_string_buf,
-                        "%"PRId64"%s%03d%s%s",
-                        (gint64)timer->secs,
-                        decimal_point,
-                        timer->nsecs / 1000000,
-                        second,
-                        (timer->secs == 1 && timer->nsecs == 0) ? "" : plural);
-                break;
-
-            case WTAP_TSPREC_USEC:
-                snprintf(time_string_buf, sizeof time_string_buf,
-                        "%"PRId64"%s%06d%s%s",
-                        (gint64)timer->secs,
-                        decimal_point,
-                        timer->nsecs / 1000,
-                        second,
-                        (timer->secs == 1 && timer->nsecs == 0) ? "" : plural);
-                break;
-
-            case WTAP_TSPREC_NSEC:
-                snprintf(time_string_buf, sizeof time_string_buf,
-                        "%"PRId64"%s%09d%s%s",
-                        (gint64)timer->secs,
-                        decimal_point,
-                        timer->nsecs,
-                        second,
-                        (timer->secs == 1 && timer->nsecs == 0) ? "" : plural);
-                break;
-
-            default:
-                snprintf(time_string_buf, sizeof time_string_buf,
-                        "Unknown precision %d",
-                        tsprecision);
-                break;
+        ptr = time_string_buf;
+        remaining = sizeof time_string_buf;
+        num_bytes = snprintf(ptr, remaining,
+                             "%"PRId64,
+                             (gint64)timer->secs);
+        if (num_bytes < 0) {
+            /*
+             * That got an error.
+             * Not much else we can do.
+             */
+            snprintf(ptr, remaining, "snprintf() failed");
+            return time_string_buf;
         }
+        if ((unsigned int)num_bytes >= remaining) {
+            /*
+             * That filled up or would have overflowed the buffer.
+             * Nothing more we can do.
+             */
+            return time_string_buf;
+        }
+        ptr += num_bytes;
+        remaining -= num_bytes;
+
+        if (tsprecision != 0) {
+            /*
+             * Append the fractional part.
+             */
+            num_bytes = format_fractional_part_nsecs(ptr, remaining, timer->nsecs, decimal_point, tsprecision);
+            if ((unsigned int)num_bytes >= remaining) {
+                /*
+                 * That filled up or would have overflowed the buffer.
+                 * Nothing more we can do.
+                 */
+                return time_string_buf;
+            }
+            ptr += num_bytes;
+            remaining -= num_bytes;
+        }
+
+        /*
+         * Append the units.
+         */
+        snprintf(ptr, remaining, "%s%s",
+                 second,
+                 timer->secs == 1 ? "" : plural);
+
         return time_string_buf;
     }
 
@@ -1110,7 +951,7 @@ print_stats_table(const gchar *filename, capture_info *cf_info)
          * comments the last item(s) in each row.  We now have a new -K option to
          * disable cap_comment to more easily manage the potential silliness.
          * Potential silliness includes multiple comments (therefore resulting in
-         * more than one additional column and/or comments with embeded newlines
+         * more than one additional column and/or comments with embedded newlines
          * and/or possible delimiters).
          *
          * To mitigate embedded newlines and other special characters, use -M
@@ -1349,7 +1190,7 @@ process_cap_file(const char *filename, gboolean need_separator)
             bytes += rec.rec_header.packet_header.len;
             packet++;
             /* packet comments */
-            if (wtap_block_count_option(rec.block, OPT_COMMENT) > 0) {
+            if (pkt_comments && wtap_block_count_option(rec.block, OPT_COMMENT) > 0) {
               char *cmt_buff;
               for (i = 0; wtap_block_get_nth_string_option_value(rec.block, OPT_COMMENT, i, &cmt_buff) == WTAP_OPTTYPE_SUCCESS; i++) {
                 pc = g_new0(pkt_cmt, 1);

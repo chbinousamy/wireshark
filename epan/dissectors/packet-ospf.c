@@ -353,7 +353,7 @@ static const value_string ls_type_vals[] = {
 static const value_string ls_opaque_type_vals[] = {
     {OSPF_LSA_MPLS_TE,      "Traffic Engineering LSA"                   },
     {OSPF_LSA_SYCAMORE,     "Sycamore Optical Topology Descriptions"    },
-    {OSPF_LSA_GRACE,        "grace-LSA"                                 },
+    {OSPF_LSA_GRACE,        "Grace-LSA"                                 },
     {OSPF_LSA_OPAQUE_RI,    "Router Information (RI)"                   },
     {OSPF_LSA_L1VPN,        "L1VPN LSA"                                 },
     {OSPF_LSA_IAS_TE_V2,    "Inter-AS-TE-v2 LSA"                        },
@@ -4867,7 +4867,7 @@ proto_register_ospf(void)
         {&hf_ospf_ls_epfx_stlv,
          { "TLV Type", "ospf.tlv.extpfx.subtlv_type", FT_UINT16, BASE_DEC, VALS(ext_pfx_stlv_type_vals), 0x0, NULL, HFILL }},
         {&hf_ospf_ls_epfx_route_type,
-         { "Route Type", "ospf.tlv.extpfx.rotuetype", FT_UINT16, BASE_DEC, VALS(ext_pfx_tlv_route_vals), 0x0, NULL, HFILL }},
+         { "Route Type", "ospf.tlv.extpfx.routetype", FT_UINT16, BASE_DEC, VALS(ext_pfx_tlv_route_vals), 0x0, NULL, HFILL }},
         {&hf_ospf_ls_epfx_af,
          { "Address Family", "ospf.tlv.extpfx.af", FT_UINT8, BASE_DEC, VALS(ext_pfx_tlv_af_vals), 0x0, NULL, HFILL }},
 
@@ -5134,7 +5134,7 @@ proto_register_ospf(void)
       { &hf_ospf_ls_id_te_lsa_reserved, { "Link State ID TE-LSA Reserved", "ospf.lsid_te_lsa.reserved", FT_UINT8, BASE_DEC, NULL, 0x0, NULL, HFILL }},
       { &hf_ospf_ls_id_opaque_id, { "Link State ID Opaque ID", "ospf.lsid.opaque_id", FT_UINT24, BASE_DEC, NULL, 0x0, NULL, HFILL }},
       { &hf_ospf_lsa_number_of_links, { "Number of Links", "ospf.lsa.number_of_links", FT_UINT16, BASE_DEC, NULL, 0x0, NULL, HFILL }},
-      { &hf_ospf_v3_lsa_do_not_age, { "Do Not Age", "ospf.v3.lsa.do_not_age", FT_BOOLEAN, 16, TFS(&tfs_true_false), OSPF_DNA_LSA, NULL, HFILL }},
+      { &hf_ospf_v3_lsa_do_not_age, { "Do Not Age", "ospf.v3.lsa.do_not_age", FT_BOOLEAN, 16, NULL, OSPF_DNA_LSA, NULL, HFILL }},
       { &hf_ospf_v3_lsa_interface_id, { "Interface ID", "ospf.v3.lsa.interface_id", FT_UINT32, BASE_DEC, NULL, 0x0, NULL, HFILL }},
       { &hf_ospf_v3_lsa_neighbor_interface_id, { "Neighbor Interface ID", "ospf.v3.lsa.neighbor_interface_id", FT_UINT32, BASE_DEC, NULL, 0x0, NULL, HFILL }},
       { &hf_ospf_v3_lsa_neighbor_router_id, { "Neighbor Router ID", "ospf.v3.lsa.neighbor_router_id", FT_IPv4, BASE_NONE, NULL, 0x0, NULL, HFILL }},

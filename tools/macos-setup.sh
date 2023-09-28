@@ -20,7 +20,8 @@ DARWIN_MAJOR_VERSION=`uname -r | sed 's/\([0-9]*\).*/\1/'`
 
 #
 # The minimum supported version of Qt is 5.9, so the minimum supported version
-# of macOS is OS X 10.10 (Yosemite), aka Darwin 14.0
+# of macOS is OS X 10.10 (Yosemite), aka Darwin 14.0.
+#
 if [[ $DARWIN_MAJOR_VERSION -lt 14 ]]; then
     echo "This script does not support any versions of macOS before Yosemite" 1>&2
     exit 1
@@ -139,7 +140,7 @@ fi
 # the optional libraries are required by other optional libraries.
 #
 LIBSMI_VERSION=0.4.8
-GNUTLS_VERSION=3.6.15
+GNUTLS_VERSION=3.7.8
 if [ "$GNUTLS_VERSION" ]; then
     #
     # We'll be building GnuTLS, so we may need some additional libraries.
@@ -148,47 +149,48 @@ if [ "$GNUTLS_VERSION" ]; then
     #
     GNUTLS_MAJOR_VERSION="`expr $GNUTLS_VERSION : '\([0-9][0-9]*\).*'`"
     GNUTLS_MINOR_VERSION="`expr $GNUTLS_VERSION : '[0-9][0-9]*\.\([0-9][0-9]*\).*'`"
-    NETTLE_VERSION=3.6
+    NETTLE_VERSION=3.9.1
 
     #
     # And, in turn, Nettle requires GMP.
     #
-    GMP_VERSION=6.2.1
+    GMP_VERSION=6.3.0
 
     #
     # And p11-kit
-    P11KIT_VERSION=0.23.21
+    P11KIT_VERSION=0.25.0
 
     # Which requires libtasn1
-    LIBTASN1_VERSION=4.16.0
+    LIBTASN1_VERSION=4.19.0
 fi
 # Use 5.2.4, not 5.3, for now; lua_bitop.c hasn't been ported to 5.3
 # yet, and we need to check for compatibility issues (we'd want Lua
 # scripts to work with 5.1, 5.2, and 5.3, as long as they only use Lua
 # features present in all three versions)
 LUA_VERSION=5.2.4
-SNAPPY_VERSION=1.1.8
-ZSTD_VERSION=1.4.2
-LIBXML2_VERSION=2.9.9
-LZ4_VERSION=1.9.2
-SBC_VERSION=1.3
-CARES_VERSION=1.15.0
-LIBSSH_VERSION=0.9.6
+SNAPPY_VERSION=1.1.10
+ZSTD_VERSION=1.4.5
+LIBXML2_VERSION=2.11.5
+LZ4_VERSION=1.9.4
+SBC_VERSION=2.0
+CARES_VERSION=1.19.1
+LIBSSH_VERSION=0.10.5
 # mmdbresolve
 MAXMINDDB_VERSION=1.4.3
-NGHTTP2_VERSION=1.46.0
-NGHTTP3_VERSION=0.14.0
+NGHTTP2_VERSION=1.56.0
+NGHTTP3_VERSION=0.15.0
 SPANDSP_VERSION=0.0.6
-SPEEXDSP_VERSION=1.2.0
+SPEEXDSP_VERSION=1.2.1
 if [ "$SPANDSP_VERSION" ]; then
     #
     # SpanDSP depends on libtiff.
     #
     LIBTIFF_VERSION=3.8.1
 fi
-BCG729_VERSION=1.0.2
+BCG729_VERSION=1.1.1
+# libilbc 3.0.0 & later link with absiel, which is released under Apache 2.0
 ILBC_VERSION=2.0.2
-OPUS_VERSION=1.3.1
+OPUS_VERSION=1.4
 
 #
 # Is /usr/bin/python3 a working version of Python?  It may be, as it
@@ -208,7 +210,7 @@ else
 fi
 BROTLI_VERSION=1.0.9
 # minizip
-ZLIB_VERSION=1.2.11
+ZLIB_VERSION=1.3
 # Uncomment to enable automatic updates using Sparkle
 #SPARKLE_VERSION=2.1.0
 
@@ -387,7 +389,7 @@ install_pcre2() {
         # https://github.com/Homebrew/homebrew-core/blob/master/Formula/pcre2.rb
         # https://github.com/microsoft/vcpkg/blob/master/ports/pcre2/portfile.cmake
         MACOSX_DEPLOYMENT_TARGET=$min_osx_target SDKROOT="$SDKPATH" \
-            cmake -DBUILD_STATIC_LIBS=OFF -DBUILD_SHARED_LIBS=ON -DPCRE2_SUPPORT_JIT=ON -DPCRE2_SUPPORT_UNICODE=ON .. || exit 1
+            $DO_CMAKE -DBUILD_STATIC_LIBS=OFF -DBUILD_SHARED_LIBS=ON -DPCRE2_SUPPORT_JIT=ON -DPCRE2_SUPPORT_UNICODE=ON .. || exit 1
         make $MAKE_BUILD_OPTS || exit 1
         $DO_MAKE_INSTALL || exit 1
         cd ../..
@@ -775,7 +777,109 @@ install_gettext() {
         $no_build && echo "Skipping installation" && return
         gzcat gettext-$GETTEXT_VERSION.tar.gz | tar xf - || exit 1
         cd gettext-$GETTEXT_VERSION
-        CFLAGS="$CFLAGS -D_FORTIFY_SOURCE=0 $VERSION_MIN_FLAGS $SDKFLAGS" LDFLAGS="$LDFLAGS $VERSION_MIN_FLAGS $SDKFLAGS" ./configure || exit 1
+
+        #
+        # This is annoying.
+        #
+        # GNU gettext's configuration script checks for the presence of an
+        # implementation of iconv().  Not only does it check whether iconv()
+        # is available, *but* it checks for certain behavior *not* specified
+        # by POSIX that the GNU implementation provides, namely that an
+        # attempt to convert the UTF-8 for the EURO SYMBOL chaaracter to
+        # ISO 8859-1 results in an error.
+        #
+        # macOS, prior to Sierra, provided the GNU iconv library (as it's
+        # a POSIX API).
+        #
+        # Sierra appears to have picked up an implementation from FreeBSD
+        # (that implementation originated with the CITRUS project:
+        #
+        #    http://citrus.bsdclub.org
+        #
+        # with additional work done to integrate it into NetBSD, and then
+        # adopted by FreeBSD with further work done).
+        #
+        # That implementation does *NOT* return an error in that case; instead,
+        # it transliterates the EURO SYMBOL to "EUR".
+        #
+        # Both behaviors conform to POSIX.
+        #
+        # This causes GNU gettext's configure script to conclude that it
+        # should not say iconv() is available.  That, unfortunately, causes
+        # the build to fail with a linking error when trying to build
+        # libtextstyle (a library for which we have no use, that is offered
+        # as a separate library by the GNU project:
+        #
+        #    https://www.gnu.org/software/gettext/libtextstyle/manual/libtextstyle.html
+        #
+        # and that is presumably bundled in GNU gettext because some gettext
+        # tool depends on it).  The failure appears to be due to:
+        #
+        #     libtextstyle's exported symbols file is generated from a
+        #     template and a script that passes through only symbols
+        #     that appear in a header file that declares the symbol
+        #     as extern;
+        #
+        #     one such header file declares iconv_ostream_create, but only
+        #     if HAVE_ICONV is defined.
+        #
+        #     the source file that defines iconv_ostream_create does so
+        #     only if HAVE_ICONV is defined;
+        #
+        #     the aforementioned script pays *NO ATTENTION* to #ifdefs,
+        #     so it will include iconv_ostream_create in the list of
+        #     symbols to export regardless of whether a working iconv()
+        #     was found;
+        #
+        #     the linker failing because it was told to export a symbol
+        #     that doesn't exist.
+        #
+        # This is a collection of multiple messes:
+        #
+        #    1) not all versions of iconv() defaulting to "return an error
+        #    if the target character set doesn't have a character that
+        #    corresponds to the source character" and not offering a way
+        #    to force that behavior;
+        #
+        #    2) either some parts of GNU gettext - and libraries bundled
+        #    with it, for some mysterious reason - depending on the GNU
+        #    behavior rather than assuming only what POSIX specifies, and
+        #    the configure script checking for the GNU behavior and not
+        #    setting HAVE_ICONV if it's not found;
+        #
+        #    3) the process for building the exported symbols file not
+        #    removing symbols that won't exist in the build due to
+        #    a "working" iconv() not being found;
+        #
+        #    4) the file that would define iconv_ostream_create() not
+        #    defining as an always-failing stub if HAVE_ICONV isn't
+        #    defined;
+        #
+        #    5) macOS's linker failing if a symbol is specified in an
+        #    exported symbols file but not found, while other linkers
+        #    just ignore it?  (I add this because I'm a bit surprised
+        #    that this has not been fixed, as I suspect it would fail
+        #    on FreeBSD and possibly NetBSD as well, as I think their
+        #    iconv()s also default to transliterating rather than failing
+        #    if an input character has no corresponding character in
+        #    the output encoding.)
+        #
+        # The Homebrew folks are aware of this and have reported it to
+        # Apple as a "feedback", for what that's worth:
+        #
+        #    https://github.com/Homebrew/homebrew-core/commit/af3b4da5a096db3d9ee885e99ed29b33dec1f1c4
+        #
+        # We adopt their fix, which is to run the configure script with
+        # "am_cv_func_iconv_works=y" as one of the arguments if it's
+        # running on Sonoma; in at least one test, doing so on Ventura
+        # caused the build to fail.
+        #
+        if [[ $DARWIN_MAJOR_VERSION -ge 23 ]]; then
+            workaround_arg="am_cv_func_iconv_works=y"
+        else
+            workaround_arg=
+        fi
+        CFLAGS="$CFLAGS -D_FORTIFY_SOURCE=0 $VERSION_MIN_FLAGS $SDKFLAGS" LDFLAGS="$LDFLAGS $VERSION_MIN_FLAGS $SDKFLAGS" ./configure $workaround_arg || exit 1
         make $MAKE_BUILD_OPTS || exit 1
         $DO_MAKE_INSTALL || exit 1
         cd ..
@@ -883,6 +987,25 @@ install_glib() {
         # doesn't find libffi, we construct a .pc file for that libffi,
         # and install it in /usr/local/lib/pkgconfig.
         #
+        # First, check whether pkg-config finds libffi but thinks its
+        # header files are in a non-existent directory.  That probaby
+        # means that we generated the .pc file when some SDK was the
+        # appropriate choice, but Xcode has been updated since then
+        # and that SDK is no longer present.  If so, we remove it,
+        # so that we will regenerate it if necessary, rather than
+        # trying to build with a bogus include directory.  (Yes, this
+        # can happen, and has happened, causing mysterius build
+        # failures when "#include <ffi.h>" fails.)
+        #
+        if pkg-config libffi ; then
+            # We have a .pc file for libffi; what does it say the
+            # include directory is?
+            incldir=`pkg-config --variable=includedir libffi`
+            if [ ! -z "$incldir" -a ! -d "$incldir" ] ; then
+                # Bogus - remove it, assuming
+                $DO_RM /usr/local/lib/pkgconfig/libffi.pc
+            fi
+        fi
         if pkg-config libffi ; then
             # It found libffi; no need to install a .pc file, and we
             # don't want to overwrite what's there already.
@@ -1102,7 +1225,9 @@ install_qt() {
         # 5.9 - 5.14: qt-opensource-mac-x64-{version}.dmg
         # 5.15 - 6.0: Offline installers no longer provided.
         # ( https://download.qt.io/archive/qt/5.15/5.15.0/OFFLINE_README.txt )
-        # XXX: We need a different approach for QT >= 5.15
+        # XXX: We need a different approach for QT >= 5.15. One option would be to
+        # install https://github.com/miurahr/aqtinstall, either permanently or into
+        # a temporary venv.
         #
         case $QT_MAJOR_VERSION in
 
@@ -1428,7 +1553,7 @@ install_p11_kit() {
         # but it's not clear that this matters to us, so we just
         # configure p11-kit not to use libffi.
         #
-        CXXFLAGS="$CXXFLAGS $VERSION_MIN_FLAGS $SDKFLAGS" LDFLAGS="$LDFLAGS $VERSION_MIN_FLAGS $SDKFLAGS" ./configure --without-libffi --without-trust-paths || exit 1
+        CFLAGS="$CFLAGS $VERSION_MIN_FLAGS $SDKFLAGS" CXXFLAGS="$CXXFLAGS $VERSION_MIN_FLAGS $SDKFLAGS" LDFLAGS="$LDFLAGS $VERSION_MIN_FLAGS $SDKFLAGS -L/usr/local/lib" LIBS=-lintl ./configure --without-libffi --without-trust-paths || exit 1
         make $MAKE_BUILD_OPTS || exit 1
         $DO_MAKE_INSTALL || exit 1
         cd ..
@@ -1469,11 +1594,7 @@ install_nettle() {
         $no_build && echo "Skipping installation" && return
         gzcat nettle-$NETTLE_VERSION.tar.gz | tar xf - || exit 1
         cd nettle-$NETTLE_VERSION
-        if [ "$DARWIN_PROCESSOR_ARCH" = "arm" ] ; then
-            CFLAGS="$CFLAGS $VERSION_MIN_FLAGS $SDKFLAGS" CXXFLAGS="$CXXFLAGS $VERSION_MIN_FLAGS $SDKFLAGS" LDFLAGS="$LDFLAGS $VERSION_MIN_FLAGS $SDKFLAGS" ./configure --disable-assembler || exit 1
-        else
-            CFLAGS="$CFLAGS $VERSION_MIN_FLAGS $SDKFLAGS" CXXFLAGS="$CXXFLAGS $VERSION_MIN_FLAGS $SDKFLAGS" LDFLAGS="$LDFLAGS $VERSION_MIN_FLAGS $SDKFLAGS" ./configure || exit 1
-        fi
+        CFLAGS="$CFLAGS $VERSION_MIN_FLAGS $SDKFLAGS -I/usr/local/include" CXXFLAGS="$CXXFLAGS $VERSION_MIN_FLAGS $SDKFLAGS" LDFLAGS="$LDFLAGS $VERSION_MIN_FLAGS $SDKFLAGS -L/usr/local/lib" ./configure || exit 1
         make $MAKE_BUILD_OPTS || exit 1
         $DO_MAKE_INSTALL || exit 1
         cd ..
@@ -1534,7 +1655,7 @@ install_gnutls() {
             bzcat gnutls-$GNUTLS_VERSION.tar.bz2 | tar xf - || exit 1
         fi
         cd gnutls-$GNUTLS_VERSION
-        CFLAGS="$CFLAGS $VERSION_MIN_FLAGS $SDKFLAGS" CXXFLAGS="$CXXFLAGS $VERSION_MIN_FLAGS $SDKFLAGS" LDFLAGS="$LDFLAGS $VERSION_MIN_FLAGS $SDKFLAGS" ./configure --with-included-unistring --disable-guile || exit 1
+        CFLAGS="$CFLAGS $VERSION_MIN_FLAGS $SDKFLAGS -I /usr/local/include" CXXFLAGS="$CXXFLAGS $VERSION_MIN_FLAGS $SDKFLAGS -I/usr/local/include/" LDFLAGS="$LDFLAGS $VERSION_MIN_FLAGS $SDKFLAGS -L/usr/local/lib" ./configure --with-included-unistring --disable-guile || exit 1
         make $MAKE_BUILD_OPTS || exit 1
         $DO_MAKE_INSTALL || exit 1
         cd ..
@@ -1613,6 +1734,10 @@ install_snappy() {
         $no_build && echo "Skipping installation" && return
         gzcat snappy-$SNAPPY_VERSION.tar.gz | tar xf - || exit 1
         cd snappy-$SNAPPY_VERSION
+	if [ "$SNAPPY_VERSION" = "1.1.10" ] ; then
+	    # This patch corresponds to https://github.com/google/snappy/commit/27f34a580be4a3becf5f8c0cba13433f53c21337
+	    patch -p0 <${topdir}/macosx-support-lib-patches/snappy-signed.patch || exit 1
+	fi
         mkdir build_dir
         cd build_dir
         #
@@ -1622,7 +1747,7 @@ install_snappy() {
         # will carry that dependency with it, so linking with it should
         # Just Work.
         #
-        MACOSX_DEPLOYMENT_TARGET=$min_osx_target SDKROOT="$SDKPATH" cmake -DBUILD_SHARED_LIBS=YES ../ || exit 1
+        MACOSX_DEPLOYMENT_TARGET=$min_osx_target SDKROOT="$SDKPATH" $DO_CMAKE -DBUILD_SHARED_LIBS=YES -DSNAPPY_BUILD_BENCHMARKS=NO -DSNAPPY_BUILD_TESTS=NO ../ || exit 1
         make $MAKE_BUILD_OPTS || exit 1
         $DO_MAKE_INSTALL || exit 1
         cd ../..
@@ -1718,9 +1843,12 @@ uninstall_zstd() {
 install_libxml2() {
     if [ "$LIBXML2_VERSION" -a ! -f libxml2-$LIBXML2_VERSION-done ] ; then
         echo "Downloading, building, and installing libxml2:"
-        [ -f libxml2-$LIBXML2_VERSION.tar.gz ] || curl -L -O ftp://xmlsoft.org/libxml2/libxml2-$LIBXML2_VERSION.tar.gz || exit 1
+        LIBXML2_MAJOR_VERSION="`expr $LIBXML2_VERSION : '\([0-9][0-9]*\).*'`"
+        LIBXML2_MINOR_VERSION="`expr $LIBXML2_VERSION : '[0-9][0-9]*\.\([0-9][0-9]*\).*'`"
+        LIBXML2_MAJOR_MINOR_VERSION=$LIBXML2_MAJOR_VERSION.$LIBXML2_MINOR_VERSION
+        [ -f libxml2-$LIBXML2_VERSION.tar.gz ] || curl -L -O https://download.gnome.org/sources/libxml2/$LIBXML2_MAJOR_MINOR_VERSION/libxml2-$LIBXML2_VERSION.tar.xz || exit 1
         $no_build && echo "Skipping installation" && return
-        gzcat libxml2-$LIBXML2_VERSION.tar.gz | tar xf - || exit 1
+        xzcat libxml2-$LIBXML2_VERSION.tar.xz | tar xf - || exit 1
         cd libxml2-$LIBXML2_VERSION
         #
         # At least on macOS 12.0.1 with Xcode 13.1, when we build
@@ -1750,7 +1878,7 @@ uninstall_libxml2() {
             # Get rid of the previously downloaded and unpacked version.
             #
             rm -rf libxml2-$installed_libxml2_version
-            rm -rf libxml2-$installed_libxml2_version.tar.gz
+            rm -rf libxml2-$installed_libxml2_version.tar.xz
         fi
 
         installed_libxml2_version=""
@@ -1958,10 +2086,9 @@ install_libssh() {
         $no_build && echo "Skipping installation" && return
         xzcat libssh-$LIBSSH_VERSION.tar.xz | tar xf - || exit 1
         cd libssh-$LIBSSH_VERSION
-        patch -p0 <${topdir}/macosx-support-lib-patches/libssh-void-arglists.patch || exit 1
         mkdir build
         cd build
-        MACOSX_DEPLOYMENT_TARGET=$min_osx_target SDKROOT="$SDKPATH" cmake -DWITH_GCRYPT=1 ../ || exit 1
+        MACOSX_DEPLOYMENT_TARGET=$min_osx_target SDKROOT="$SDKPATH" $DO_CMAKE -DWITH_GCRYPT=1 ../ || exit 1
         make $MAKE_BUILD_OPTS || exit 1
         $DO_MAKE_INSTALL || exit 1
         cd ../..
@@ -2195,14 +2322,16 @@ uninstall_speexdsp() {
 install_bcg729() {
     if [ "$BCG729_VERSION" -a ! -f bcg729-$BCG729_VERSION-done ] ; then
         echo "Downloading, building, and installing bcg729:"
-        [ -f bcg729-$BCG729_VERSION.tar.gz ] || curl -L -O https://download.savannah.gnu.org/releases/linphone/plugins/sources/bcg729-$BCG729_VERSION.tar.gz || exit 1
+        [ -f bcg729-$BCG729_VERSION.tar.gz ] || curl -L -O https://gitlab.linphone.org/BC/public/bcg729/-/archive/$BCG729_VERSION/bcg729-$BCG729_VERSION.tar.gz || exit 1
         $no_build && echo "Skipping installation" && return
         gzcat bcg729-$BCG729_VERSION.tar.gz | tar xf - || exit 1
         cd bcg729-$BCG729_VERSION
-        CFLAGS="$CFLAGS $VERSION_MIN_FLAGS $SDKFLAGS" CXXFLAGS="$CXXFLAGS $VERSION_MIN_FLAGS $SDKFLAGS" LDFLAGS="$LDFLAGS $VERSION_MIN_FLAGS $SDKFLAGS" ./configure || exit 1
+        mkdir build_dir
+        cd build_dir
+        MACOSX_DEPLOYMENT_TARGET=$min_osx_target SDKROOT="$SDKPATH" $DO_CMAKE  ../ || exit 1
         make $MAKE_BUILD_OPTS || exit 1
         $DO_MAKE_INSTALL || exit 1
-        cd ..
+        cd ../..
         touch bcg729-$BCG729_VERSION-done
     fi
 }
@@ -2211,8 +2340,21 @@ uninstall_bcg729() {
     if [ ! -z "$installed_bcg729_version" ] ; then
         echo "Uninstalling bcg729:"
         cd bcg729-$installed_bcg729_version
-        $DO_MAKE_UNINSTALL || exit 1
-        make distclean || exit 1
+        #
+        # bcg729 uses cmake on macOS and doesn't support "make uninstall";
+        # just remove what we know it installs.
+        #
+        # $DO_MAKE_UNINSTALL || exit 1
+        $DO_RM -rf /usr/local/share/Bcg729 \
+                   /usr/local/lib/libbcg729* \
+                   /usr/local/include/bcg729 \
+                   /usr/local/lib/pkgconfig/libbcg729* || exit 1
+        #
+        # bcg729 uses cmake on macOS and doesn't support "make distclean";
+        # just remove the enire build directory.
+        #
+        # make distclean || exit 1
+        rm -rf build_dir || exit 1
         cd ..
         rm bcg729-$installed_bcg729_version-done
 
@@ -2267,7 +2409,7 @@ uninstall_ilbc() {
 install_opus() {
     if [ "$OPUS_VERSION" -a ! -f opus-$OPUS_VERSION-done ] ; then
         echo "Downloading, building, and installing opus:"
-        [ -f opus-$OPUS_VERSION.tar.gz ] || curl -L -O https://archive.mozilla.org/pub/opus/opus-$OPUS_VERSION.tar.gz || exit 1
+        [ -f opus-$OPUS_VERSION.tar.gz ] || curl -L -O https://downloads.xiph.org/releases/opus/opus-$OPUS_VERSION.tar.gz || exit 1
         $no_build && echo "Skipping installation" && return
         gzcat opus-$OPUS_VERSION.tar.gz | tar xf - || exit 1
         cd opus-$OPUS_VERSION
@@ -2390,7 +2532,7 @@ install_brotli() {
         cd brotli-$BROTLI_VERSION
         mkdir build_dir
         cd build_dir
-        MACOSX_DEPLOYMENT_TARGET=$min_osx_target SDKROOT="$SDKPATH" cmake ../ || exit 1
+        MACOSX_DEPLOYMENT_TARGET=$min_osx_target SDKROOT="$SDKPATH" $DO_CMAKE ../ || exit 1
         make $MAKE_BUILD_OPTS || exit 1
         $DO_MAKE_INSTALL || exit 1
         cd ../..
@@ -3286,6 +3428,29 @@ else
     DO_RM="sudo rm"
     DO_MV="sudo mv"
 fi
+
+#
+# When building with CMake, don't build libraries with an install path
+# that begins with @rpath because that will cause binaries linked with it
+# to use that path as the library to look for, and that will cause the
+# run-time linker, at least on macOS 14 and later, not to find the library
+# in /usr/local/lib unless you explicitly set DYLD_LIBRARY_PATH to include
+# /usr/local/lib.  That means that you get "didn't find libpcre" errors if
+# you try to run binaries from a build unless you set DYLD_LIBRARYPATH to
+# include /usr/local/lib.
+#
+# However, setting CMAKE_MACOSX_RPATH to OFF causes the installed
+# library just to have the file name of the library as its install
+# name.  It needs to be the full installed path of the library in
+# order to make running binaries from the build directory work, so
+# we set CMAKE_INSTALL_NAME_DIR to /usr/local/lib.
+#
+# packaging/macosx/osx-app.sh will convert *all* libraries in
+# the app bundle to have an @rpath install name, so this won't
+# break anything there; it just fixes the ability to run from the
+# build directory.
+#
+DO_CMAKE="cmake -DCMAKE_MACOSX_RPATH=OFF -DCMAKE_INSTALL_NAME_DIR=/usr/local/lib"
 
 # This script is meant to be run in the source root.  The following
 # code will attempt to get you there, but is not perfect (particulary

@@ -32,6 +32,7 @@
 #include "ui/simple_dialog.h"
 
 #include <wsutil/file_util.h>
+#include <wsutil/strtoi.h>
 
 #define RECENT_KEY_MAIN_TOOLBAR_SHOW            "gui.toolbar_main_show"
 #define RECENT_KEY_FILTER_TOOLBAR_SHOW          "gui.filter_toolbar_show"
@@ -75,6 +76,8 @@
 #define RECENT_GUI_SEARCH_CASE_SENSITIVE        "gui.search_case_sensitive"
 #define RECENT_GUI_SEARCH_TYPE                  "gui.search_type"
 #define RECENT_GUI_FOLLOW_SHOW                  "gui.follow_show"
+#define RECENT_GUI_SHOW_BYTES_DECODE            "gui.show_bytes_decode"
+#define RECENT_GUI_SHOW_BYTES_SHOW              "gui.show_bytes_show"
 
 #define RECENT_GUI_GEOMETRY                   "gui.geom."
 
@@ -91,22 +94,30 @@ static const value_string ts_type_values[] = {
     { TS_ABSOLUTE,             "ABSOLUTE"           },
     { TS_ABSOLUTE_WITH_YMD,    "ABSOLUTE_WITH_YMD"  },
     { TS_ABSOLUTE_WITH_YDOY,   "ABSOLUTE_WITH_YDOY" },
-    { TS_ABSOLUTE_WITH_YMD,    "ABSOLUTE_WITH_DATE" },  /* Backward compability */
+    { TS_ABSOLUTE_WITH_YMD,    "ABSOLUTE_WITH_DATE" },  /* Backward compatibility */
     { TS_DELTA,                "DELTA"              },
     { TS_DELTA_DIS,            "DELTA_DIS"          },
     { TS_EPOCH,                "EPOCH"              },
     { TS_UTC,                  "UTC"                },
     { TS_UTC_WITH_YMD,         "UTC_WITH_YMD"       },
     { TS_UTC_WITH_YDOY,        "UTC_WITH_YDOY"      },
-    { TS_UTC_WITH_YMD,         "UTC_WITH_DATE"      },  /* Backward compability */
+    { TS_UTC_WITH_YMD,         "UTC_WITH_DATE"      },  /* Backward compatibility */
     { 0, NULL }
 };
 
+/*
+ * NOTE: all values other than TS_PREC_AUTO are the number of digits
+ * of precision.
+ *
+ * We continue to use the old names for values where they may have
+ * been written to the recent file by previous releases.  For other
+ * values, we just write it out numerically.
+ */
 static const value_string ts_precision_values[] = {
     { TS_PREC_AUTO,            "AUTO" },
     { TS_PREC_FIXED_SEC,       "SEC"  },
-    { TS_PREC_FIXED_DSEC,      "DSEC" },
-    { TS_PREC_FIXED_CSEC,      "CSEC" },
+    { TS_PREC_FIXED_100_MSEC,  "DSEC" },
+    { TS_PREC_FIXED_10_MSEC,   "CSEC" },
     { TS_PREC_FIXED_MSEC,      "MSEC" },
     { TS_PREC_FIXED_USEC,      "USEC" },
     { TS_PREC_FIXED_NSEC,      "NSEC" },
@@ -156,14 +167,31 @@ static const value_string search_type_values[] = {
     { 0, NULL }
 };
 
-static const value_string follow_show_values[] = {
-    { SHOW_ASCII,   "ASCII" },
-    { SHOW_CARRAY,  "C_ARRAYS" },
-    { SHOW_EBCDIC,  "EBCDIC" },
-    { SHOW_HEXDUMP, "HEX_DUMP" },
-    { SHOW_RAW,     "RAW" },
-    { SHOW_CODEC,   "UTF-8" },
-    { SHOW_YAML,    "YAML"},
+static const value_string bytes_show_values[] = {
+    { SHOW_ASCII,         "ASCII" },
+    { SHOW_ASCII_CONTROL, "ASCII_CONTROL" },
+    { SHOW_CARRAY,        "C_ARRAYS" },
+    { SHOW_EBCDIC,        "EBCDIC" },
+    { SHOW_HEXDUMP,       "HEX_DUMP" },
+    { SHOW_HTML,          "HTML" },
+    { SHOW_IMAGE,         "IMAGE" },
+    { SHOW_JSON,          "JSON" },
+    { SHOW_RAW,           "RAW" },
+    { SHOW_RUSTARRAY,     "RUST_ARRAY" },
+    { SHOW_CODEC,         "UTF-8" },
+    // Other codecs are generated at runtime
+    { SHOW_YAML,          "YAML"},
+    { 0, NULL }
+};
+
+static const value_string show_bytes_decode_values[] = {
+    { DecodeAsNone,            "NONE" },
+    { DecodeAsBASE64,          "BASE64" },
+    { DecodeAsCompressed,      "COMPRESSED" },
+    { DecodeAsHexDigits,       "HEX_DIGITS" },
+    { DecodeAsPercentEncoding, "PERCENT_ENCODING" },
+    { DecodeAsQuotedPrintable, "QUOTED_PRINTABLE" },
+    { DecodeAsROT13,           "ROT13"},
     { 0, NULL }
 };
 
@@ -876,9 +904,49 @@ write_profile_recent(void)
             RECENT_GUI_TIME_FORMAT, ts_type_values,
             recent.gui_time_format);
 
-    write_recent_enum(rf, "Timestamp display precision",
-            RECENT_GUI_TIME_PRECISION, ts_precision_values,
-            recent.gui_time_precision);
+    /*
+     * The value of this item is either TS_PREC_AUTO, which is a
+     * negative number meaning "pick the display precision based
+     * on the time stamp precision of the packet", or is a numerical
+     * value giving the number of decimal places to display, from 0
+     * to WS_TSPREC_MAX.
+     *
+     * It used to be that not all values between 0 and 9 (the maximum
+     * precision back then) were supported, and that names were
+     * written out to the recent file.
+     *
+     * For backwards compatibility with those older versions of
+     * Wireshark, write out the names for those values, and the
+     * raw number for other values.
+     */
+    {
+        const char *if_invalid = NULL;
+        const value_string *valp;
+        const gchar *str_value;
+
+        fprintf(rf, "\n# %s.\n", "Timestamp display precision");
+        fprintf(rf, "# One of: ");
+        valp = ts_precision_values;
+        while (valp->strptr != NULL) {
+            if (if_invalid == NULL)
+                if_invalid = valp->strptr;
+            fprintf(rf, "%s", valp->strptr);
+            valp++;
+            if (valp->strptr != NULL)
+                fprintf(rf, ", ");
+        }
+        fprintf(rf, ", or a number between 0 and %d\n", WS_TSPREC_MAX);
+
+        str_value = try_val_to_str(recent.gui_time_precision, ts_precision_values);
+        if (str_value != NULL)
+            fprintf(rf, "%s: %s\n", RECENT_GUI_TIME_PRECISION, str_value);
+        else {
+            if (recent.gui_time_precision >= 0 && recent.gui_time_precision < WS_TSPREC_MAX)
+                fprintf(rf, "%s: %d\n", RECENT_GUI_TIME_PRECISION, recent.gui_time_precision);
+            else
+                fprintf(rf, "%s: %s\n", RECENT_GUI_TIME_PRECISION, if_invalid != NULL ? if_invalid : "Unknown");
+        }
+    }
 
     write_recent_enum(rf, "Seconds display format",
             RECENT_GUI_SECONDS_FORMAT, ts_seconds_values,
@@ -906,8 +974,16 @@ write_profile_recent(void)
             recent.gui_allow_hover_selection);
 
     write_recent_enum(rf, "Follow stream show as",
-            RECENT_GUI_FOLLOW_SHOW, follow_show_values,
+            RECENT_GUI_FOLLOW_SHOW, bytes_show_values,
             recent.gui_follow_show);
+
+    write_recent_enum(rf, "Show packet bytes decode as",
+            RECENT_GUI_SHOW_BYTES_DECODE, show_bytes_decode_values,
+            recent.gui_show_bytes_decode);
+
+    write_recent_enum(rf, "Show packet bytes show as",
+            RECENT_GUI_SHOW_BYTES_SHOW, bytes_show_values,
+            recent.gui_show_bytes_show);
 
     fprintf(rf, "\n# Main window upper (or leftmost) pane size.\n");
     fprintf(rf, "# Decimal number.\n");
@@ -1063,6 +1139,7 @@ read_set_recent_pair_static(gchar *key, const gchar *value,
                             gboolean return_range_errors _U_)
 {
     long num;
+    gint32 num_int32;
     char *p;
     GList *col_l, *col_l_elt;
     col_width_data *cfmt;
@@ -1094,8 +1171,28 @@ read_set_recent_pair_static(gchar *key, const gchar *value,
         recent.gui_time_format = (ts_type)str_to_val(value, ts_type_values,
             is_packet_configuration_namespace() ? TS_RELATIVE : TS_ABSOLUTE);
     } else if (strcmp(key, RECENT_GUI_TIME_PRECISION) == 0) {
-        recent.gui_time_precision =
-            (ts_precision)str_to_val(value, ts_precision_values, TS_PREC_AUTO);
+        /*
+         * The value of this item is either TS_PREC_AUTO, which is a
+         * negative number meaning "pick the display precision based
+         * on the time stamp precision of the packet", or is a numerical
+         * value giving the number of decimal places to display, from 0
+         * to WS_TSPREC_MAX.
+         *
+         * It used to be that not all values between 0 and 9 (the maximum
+         * precision back then) were supported, and that names were
+         * written out to the recent file.
+         *
+         * If the string value is a valid number in that range, use
+         * that number, otherwise look it up in the table of names,
+         * and, if that fails, set it to TS_PREC_AUTO.
+         */
+        if (ws_strtoi32(value, NULL, &num_int32) && num_int32 >= 0 &&
+            num_int32 <= WS_TSPREC_MAX) {
+            recent.gui_time_precision = num_int32;
+        } else {
+            recent.gui_time_precision =
+                (ts_precision)str_to_val(value, ts_precision_values, TS_PREC_AUTO);
+        }
     } else if (strcmp(key, RECENT_GUI_SECONDS_FORMAT) == 0) {
         recent.gui_seconds_format =
             (ts_seconds_type)str_to_val(value, ts_seconds_values, TS_SECONDS_DEFAULT);
@@ -1115,7 +1212,11 @@ read_set_recent_pair_static(gchar *key, const gchar *value,
     } else if (strcmp(key, RECENT_GUI_ALLOW_HOVER_SELECTION) == 0) {
         parse_recent_boolean(value, &recent.gui_allow_hover_selection);
     } else if (strcmp(key, RECENT_GUI_FOLLOW_SHOW) == 0) {
-        recent.gui_follow_show = (follow_show_type)str_to_val(value, follow_show_values, SHOW_ASCII);
+        recent.gui_follow_show = (bytes_show_type)str_to_val(value, bytes_show_values, SHOW_ASCII);
+    } else if (strcmp(key, RECENT_GUI_SHOW_BYTES_DECODE) == 0) {
+        recent.gui_show_bytes_decode = (bytes_decode_type)str_to_val(value, show_bytes_decode_values, DecodeAsNone);
+    } else if (strcmp(key, RECENT_GUI_SHOW_BYTES_SHOW) == 0) {
+        recent.gui_show_bytes_show = (bytes_show_type)str_to_val(value, bytes_show_values, SHOW_ASCII);
     } else if (strcmp(key, RECENT_GUI_GEOMETRY_MAIN_MAXIMIZED) == 0) {
         parse_recent_boolean(value, &recent.gui_geometry_main_maximized);
     } else if (strcmp(key, RECENT_GUI_GEOMETRY_MAIN_UPPER_PANE) == 0) {
@@ -1381,6 +1482,8 @@ recent_read_profile_static(char **rf_path_return, int *rf_errno_return)
     recent.gui_bytes_encoding        = BYTES_ENC_FROM_PACKET;
     recent.gui_allow_hover_selection = TRUE;
     recent.gui_follow_show           = SHOW_ASCII;
+    recent.gui_show_bytes_decode     = DecodeAsNone;
+    recent.gui_show_bytes_show       = SHOW_ASCII;
 
     /* pane size of zero will autodetect */
     recent.gui_geometry_main_upper_pane   = 0;

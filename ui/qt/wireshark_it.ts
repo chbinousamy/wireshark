@@ -13980,6 +13980,22 @@ a:hover {
         <translation type="unfinished"></translation>
     </message>
     <message>
+        <source>Tenths of a millisecond</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Hundredths of a millisecond</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Tenths of a microsecond</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Hundredths of a microsecond</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
         <source>Packet &amp;Diagram</source>
         <translation>&amp;Diagramma del pacchetto</translation>
     </message>
@@ -15008,6 +15024,10 @@ a:hover {
     <message>
         <source>Please wait while Wireshark is initializing…</source>
         <translation>Attendi l&apos;inizializzazione di Wireshark...</translation>
+    </message>
+    <message>
+        <source> before updating</source>
+        <translation type="unfinished"></translation>
     </message>
     <message>
         <source>There are no TLS Session Keys to save.</source>

@@ -2377,6 +2377,8 @@ wtap_dump_init_dumper(int file_type_subtype, wtap_compression_type compression_t
 	/* Set Decryption Secrets Blocks */
 	wdh->dsbs_initial = params->dsbs_initial;
 	wdh->dsbs_growing = params->dsbs_growing;
+	/* Set Sysdig meta events */
+	wdh->sysdig_mev_growing = params->sysdig_mev_growing;
 	return wdh;
 }
 
@@ -2749,6 +2751,18 @@ wtap_dump_discard_decryption_secrets(wtap_dumper *wdh)
 	}
 }
 
+void
+wtap_dump_discard_sysdig_meta_events(wtap_dumper *wdh)
+{
+	/* As above for DSBs. */
+	if (wdh->sysdig_mev_growing) {
+		/*
+		 * Pretend we've written all of them.
+		 */
+		wdh->sysdig_mev_growing_written = wdh->sysdig_mev_growing->len;
+	}
+}
+
 /* internally open a file for writing (compressed or not) */
 #ifdef HAVE_ZLIB
 static WFILE_T
@@ -2938,9 +2952,9 @@ wtap_register_backwards_compatibility_lua_name(const char *name, int ft)
 		wtap_register_backwards_compatibility_lua_name("TSPREC_SEC",
 		    WTAP_TSPREC_SEC);
 		wtap_register_backwards_compatibility_lua_name("TSPREC_DSEC",
-		    WTAP_TSPREC_DSEC);
+		    WTAP_TSPREC_100_MSEC);
 		wtap_register_backwards_compatibility_lua_name("TSPREC_CSEC",
-		    WTAP_TSPREC_CSEC);
+		    WTAP_TSPREC_10_MSEC);
 		wtap_register_backwards_compatibility_lua_name("TSPREC_MSEC",
 		    WTAP_TSPREC_MSEC);
 		wtap_register_backwards_compatibility_lua_name("TSPREC_USEC",

@@ -176,9 +176,9 @@ static const value_string greb_attribute_types[] = {
 #define GREB_ATTRB_BYPASS_INTERVAL 10
     {GREB_ATTRB_BYPASS_INTERVAL, "Bypass interval"},
 #define GREB_ATTRB_ONLY_FIRST_TUNNEL 11
-    {GREB_ATTRB_ONLY_FIRST_TUNNEL, "only first tunnel (DSL)"},
+    {GREB_ATTRB_ONLY_FIRST_TUNNEL, "Only first tunnel (DSL)"},
 #define GREB_ATTRB_OVERFLOW_TO_SECOND 12
-    {GREB_ATTRB_OVERFLOW_TO_SECOND, "overflow to second tunnel (LTE)"},
+    {GREB_ATTRB_OVERFLOW_TO_SECOND, "Overflow to second tunnel (LTE)"},
 #define GREB_ATTRB_IPV6_PREFIX 13
     {GREB_ATTRB_IPV6_PREFIX, "IPv6 prefix assigned by HAAP"},
 #define GREB_ATTRB_ACTIVE_HELLO_INTERVAL 14
@@ -323,7 +323,7 @@ dissect_greb_filter_list_ack(tvbuff_t *tvb, proto_tree *attrb_tree, guint offset
 
 
 static void
-dissect_greb_filter_list(tvbuff_t *tvb, proto_tree *attrb_tree, guint offset, guint attrb_length)
+dissect_greb_filter_list(packet_info *pinfo, tvbuff_t *tvb, proto_tree *attrb_tree, guint offset, guint attrb_length)
 {
     proto_item *it_filter;
     proto_tree *filter_tree;
@@ -351,7 +351,7 @@ dissect_greb_filter_list(tvbuff_t *tvb, proto_tree *attrb_tree, guint offset, gu
             filter_item_length = filter_item_desc_length;
 
         it_filter_item = proto_tree_add_none_format(filter_tree, hf_greb_attr_val_none, tvb, offset,
-            filter_item_length + 4, "Filter item - %s", tvb_get_string_enc(wmem_packet_scope(), tvb, offset + 8,
+            filter_item_length + 4, "Filter item - %s", tvb_get_string_enc(pinfo->pool, tvb, offset + 8,
             filter_item_desc_length, ENC_UTF_8));
         filter_item_tree = proto_item_add_subtree(it_filter_item, ett_grebonding_filter_item);
         proto_tree_add_item(filter_item_tree, hf_greb_attr_filter_item_type, tvb, offset, 2, ENC_BIG_ENDIAN);
@@ -435,7 +435,7 @@ dissect_greb(tvbuff_t *tvb, packet_info *pinfo, proto_tree *tree, void* data _U_
                     break;
 
                 case GREB_ATTRB_FILTER_LIST:
-                    dissect_greb_filter_list(tvb, attrb_tree, offset, attrb_length);
+                    dissect_greb_filter_list(pinfo, tvb, attrb_tree, offset, attrb_length);
                     break;
 
                 case GREB_ATTRB_FILTER_LIST_ACK:

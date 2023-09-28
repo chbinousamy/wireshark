@@ -844,7 +844,7 @@ static const value_string isis_lsp_ext_is_reachability_code_vals[] = {
     { 21, "Interface Switching Capability Descriptor" },
     { 22, "Bandwidth Constraints" },
     { 23, "Unconstrained TE LSP Count (sub-)TLV" },
-    { 24, "remote AS number" },
+    { 24, "Remote AS number" },
     { 25, "IPv4 remote ASBR Identifier" },
     { 26, "IPv6 remote ASBR Identifier" },
     { 27, "Interface Adjustment Capability Descriptor (IACD)" },
@@ -6772,7 +6772,7 @@ proto_register_isis_lsp(void)
         },
         { &hf_isis_lsp_expense,
           { "Expense metric", "isis.lsp.expense",
-            FT_UINT8, BASE_DEC, NULL, 0xef,
+            FT_UINT8, BASE_DEC, NULL, 0x3f,
             NULL, HFILL }
         },
         { &hf_isis_lsp_expense_support,

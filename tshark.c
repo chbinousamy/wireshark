@@ -43,6 +43,7 @@
 #include <ui/urls.h>
 #include <wsutil/filesystem.h>
 #include <wsutil/file_util.h>
+#include <wsutil/time_util.h>
 #include <wsutil/socket.h>
 #include <wsutil/privileges.h>
 #include <wsutil/report_message.h>
@@ -312,7 +313,7 @@ print_elapsed_json(const char *cf_name, const char *dfilter)
         json_dumper_value_string(&dumper, dfilter);
     }
     json_dumper_set_member_name(&dumper, "time_unit");
-    json_dumper_value_string(&dumper, "millisecond");
+    json_dumper_value_string(&dumper, "microseconds");
     DUMP("elapsed", tshark_elapsed.elapsed_first_pass +
                         tshark_elapsed.elapsed_second_pass);
     DUMP("dfilter_expand", tshark_elapsed.dfilter_expand);
@@ -461,6 +462,8 @@ print_usage(FILE *output)
     fprintf(output, "                            packets:NUM - switch to next file after NUM packets\n");
     fprintf(output, "                           interval:NUM - switch to next file when the time is\n");
     fprintf(output, "                                          an exact multiple of NUM secs\n");
+    fprintf(output, "                         printname:FILE - print filename to FILE when written\n");
+    fprintf(output, "                                          (can use 'stdout' or 'stderr')\n");
 #endif  /* HAVE_LIBPCAP */
 #ifdef HAVE_PCAP_REMOTE
     fprintf(output, "RPCAP options:\n");
@@ -979,7 +982,6 @@ main(int argc, char *argv[])
     const gchar         *volatile tls_session_keys_file = NULL;
     exp_pdu_t            exp_pdu_tap_data;
     const gchar*         elastic_mapping_filter = NULL;
-    const char           *endptr;
 
     /*
      * The leading + ensures that getopt_long() does not permute the argv[]
@@ -1013,6 +1015,8 @@ main(int argc, char *argv[])
 #else
     setlocale(LC_ALL, "");
 #endif
+
+    ws_tzset();
 
     cmdarg_err_init(tshark_cmdarg_err, tshark_cmdarg_err_cont);
 
@@ -1824,7 +1828,7 @@ main(int argc, char *argv[])
             case LONGOPT_SELECTED_FRAME:
                 /* Hidden option to mark a frame as "selected". Used for testing and debugging.
                  * Only active in two-pass mode. */
-                if (!ws_strtou32(ws_optarg, &endptr, &selected_frame_number) || *endptr != '\0') {
+                if (!ws_strtou32(ws_optarg, NULL, &selected_frame_number)) {
                     fprintf(stderr, "tshark: \"%s\" is not a valid frame number\n", ws_optarg);
                     exit_status = WS_EXIT_INVALID_OPTION;
                     goto clean_exit;
@@ -2871,7 +2875,10 @@ static void
 capture_input_error(capture_session *cap_session _U_, char *error_msg, char *secondary_error_msg)
 {
     cmdarg_err("%s", error_msg);
-    cmdarg_err_cont("%s", secondary_error_msg);
+    if (secondary_error_msg != NULL && *secondary_error_msg != '\0') {
+        /* We have both primary and secondary messages. */
+        cmdarg_err_cont("%s", secondary_error_msg);
+    }
 }
 
 
@@ -2951,7 +2958,7 @@ capture_input_new_file(capture_session *cap_session, gchar *new_file)
 
     /* if we are in real-time mode, open the new file now */
     if (do_dissection) {
-        /* this is probably unecessary, but better safe than sorry */
+        /* this is probably unnecessary, but better safe than sorry */
         cap_session->cf->open_type = WTAP_TYPE_AUTO;
         /* Attempt to open the capture file and set up to read from it. */
         switch(cf_open(cap_session->cf, capture_opts->save_file, WTAP_TYPE_AUTO, is_tempfile, &err)) {
@@ -3159,7 +3166,7 @@ capture_input_drops(capture_session *cap_session _U_, guint32 dropped, const cha
 static void
 capture_input_closed(capture_session *cap_session _U_, gchar *msg)
 {
-    if (msg != NULL)
+    if (msg != NULL && *msg != '\0')
         fprintf(stderr, "tshark: %s\n", msg);
 
     report_counts();

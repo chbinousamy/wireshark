@@ -34,7 +34,7 @@ typedef struct {
 #define NSTIME_INIT_ZERO {0, 0}
 
 /* Initialize to unset */
-#define NSTIME_INIT_UNSET {0, G_MAXINT}
+#define NSTIME_INIT_UNSET {0, INT_MAX}
 
 /* Initialize to a specified number of seconds and nanoseconds */
 #define NSTIME_INIT_SECS_NSECS(secs, nsecs)	{secs, nsecs}
@@ -57,7 +57,7 @@ typedef struct {
 WS_DLL_PUBLIC void nstime_set_zero(nstime_t *nstime);
 
 /** is the given nstime_t currently zero? */
-WS_DLL_PUBLIC gboolean nstime_is_zero(const nstime_t *nstime);
+WS_DLL_PUBLIC bool nstime_is_zero(const nstime_t *nstime);
 
 /** set the given nstime_t to (0,maxint) to mark it as "unset"
  * That way we can find the first frame even when a timestamp
@@ -66,7 +66,7 @@ WS_DLL_PUBLIC gboolean nstime_is_zero(const nstime_t *nstime);
 WS_DLL_PUBLIC void nstime_set_unset(nstime_t *nstime);
 
 /* is the given nstime_t currently (0,maxint)? */
-WS_DLL_PUBLIC gboolean nstime_is_unset(const nstime_t *nstime);
+WS_DLL_PUBLIC bool nstime_is_unset(const nstime_t *nstime);
 
 /** duplicate the current time
  *
@@ -106,7 +106,7 @@ WS_DLL_PUBLIC void nstime_sum(nstime_t *sum, const nstime_t *a, const nstime_t *
  */
 WS_DLL_PUBLIC int nstime_cmp (const nstime_t *a, const nstime_t *b );
 
-WS_DLL_PUBLIC guint nstime_hash(const nstime_t *nstime);
+WS_DLL_PUBLIC unsigned nstime_hash(const nstime_t *nstime);
 
 /** converts nstime to double, time base is milli seconds */
 WS_DLL_PUBLIC double nstime_to_msec(const nstime_t *nstime);
@@ -114,14 +114,14 @@ WS_DLL_PUBLIC double nstime_to_msec(const nstime_t *nstime);
 /** converts nstime to double, time base is seconds */
 WS_DLL_PUBLIC double nstime_to_sec(const nstime_t *nstime);
 
-/** converts Windows FILETIME to nstime, returns TRUE on success,
-    FALSE on failure */
-WS_DLL_PUBLIC gboolean filetime_to_nstime(nstime_t *nstime, guint64 filetime);
+/** converts Windows FILETIME to nstime, returns true on success,
+    false on failure */
+WS_DLL_PUBLIC bool filetime_to_nstime(nstime_t *nstime, uint64_t filetime);
 
 /** converts time like Windows FILETIME, but expressed in nanoseconds
-    rather than tenths of microseconds, to nstime, returns TRUE on success,
-    FALSE on failure */
-WS_DLL_PUBLIC gboolean nsfiletime_to_nstime(nstime_t *nstime, guint64 nsfiletime);
+    rather than tenths of microseconds, to nstime, returns true on success,
+    false on failure */
+WS_DLL_PUBLIC bool nsfiletime_to_nstime(nstime_t *nstime, uint64_t nsfiletime);
 
 typedef enum {
     ISO8601_DATETIME,       /** e.g. 2014-07-04T12:34:56.789+00:00 */
@@ -129,15 +129,15 @@ typedef enum {
     ISO8601_DATETIME_AUTO,  /** Autodetect the presence of separators */
 } iso8601_fmt_e;
 
-/** parse an ISO 8601 format datetime string to nstime, returns number of
-    chars parsed on success, 0 on failure.
+/** parse an ISO 8601 format datetime string to nstime, returns pointer
+    to the first character after the last character, NULL on failure
     Note that nstime is set to unset in the case of failure */
-WS_DLL_PUBLIC guint8 iso8601_to_nstime(nstime_t *nstime, const char *ptr, iso8601_fmt_e format);
+WS_DLL_PUBLIC const char * iso8601_to_nstime(nstime_t *nstime, const char *ptr, iso8601_fmt_e format);
 
 /** parse an Unix epoch timestamp format datetime string to nstime, returns
-    number of chars parsed on success, 0 on failure.
+    pointer to the first character after the last character, NULL on failure
     Note that nstime is set to unset in the case of failure */
-WS_DLL_PUBLIC guint8 unix_epoch_to_nstime(nstime_t *nstime, const char *ptr);
+WS_DLL_PUBLIC const char * unix_epoch_to_nstime(nstime_t *nstime, const char *ptr);
 
 #define NSTIME_ISO8601_BUFSIZE  sizeof("YYYY-MM-DDTHH:MM:SS.123456789Z")
 
@@ -158,9 +158,26 @@ typedef enum {
     WS_TSPREC_100_MSEC = 1,
     WS_TSPREC_10_MSEC  = 2,
     WS_TSPREC_MSEC     = 3,
+    WS_TSPREC_100_USEC = 4,
+    WS_TSPREC_10_USEC  = 5,
     WS_TSPREC_USEC     = 6,
+    WS_TSPREC_100_NSEC = 7,
+    WS_TSPREC_10_NSEC  = 8,
     WS_TSPREC_NSEC     = 9
 } ws_tsprec_e;
+
+/*
+ * Maximum time stamp precision supported.
+ * Note that going beyond nanosecond precision would require expanding
+ * the fractional part of an nstime_t to 64 bits, and changing code
+ * that currently only handles second to nanosecond precision.
+ */
+#define WS_TSPREC_MAX 9
+
+/*
+ * Total number of valid precision values.
+ */
+#define NUM_WS_TSPREC_VALS (WS_TSPREC_MAX + 1)
 
 #ifdef __cplusplus
 }

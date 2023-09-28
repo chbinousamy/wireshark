@@ -31,6 +31,7 @@
 #include "ws_strptime.h"
 #include <time.h>
 #include <wsutil/time_util.h> /* For ws_localtime_r() */
+#include <wsutil/strtoi.h>
 
 #ifdef _WIN32
 #define tzset		_tzset
@@ -38,29 +39,6 @@
 #define timezone	_timezone
 #define daylight	_daylight
 #endif
-
-#ifdef HAVE_STRUCT_TM_TM_ZONE
-#define TM_ZONE		tm_zone
-#else
-#undef TM_ZONE
-#endif
-#ifdef HAVE_STRUCT_TM_TM_GMTOFF
-#define TM_GMTOFF	tm_gmtoff
-#else
-#undef TM_GMTOFF
-#endif
-
-/*
- * The following macro is used to remove const cast-away warnings
- * from gcc -Wcast-qual; it should be used with caution because it
- * can hide valid errors; in particular most valid uses are in
- * situations where the API requires it, not to cast away string
- * constants. We don't use *intptr_t on purpose here and we are
- * explicit about unsigned long so that we don't have additional
- * dependencies.
- */
-//#define __UNCONST(a)	((void *)(unsigned long)(const void *)(a))
-#define __UNCONST(a)	((void *)(a))
 
 static const unsigned char *conv_num(const unsigned char *, int *, unsigned, unsigned);
 static const unsigned char *find_string(const unsigned char *, int *, const char * const *,
@@ -140,9 +118,7 @@ static const unsigned char *find_string(const unsigned char *, int *, const char
 #define HAVE_YEAR(s)		(s & S_YEAR)
 #define HAVE_HOUR(s)		(s & S_HOUR)
 
-#ifdef TM_ZONE
 static char utc[] = { "UTC" };
-#endif
 /* RFC-822/RFC-2822 */
 static const char * const nast[5] = {
        "EST",    "CST",    "MST",    "PST",    "\0\0\0"
@@ -199,24 +175,29 @@ first_wday_of(int yr)
 
 #define delim(p)	((p) == '\0' || g_ascii_isspace((unsigned char)(p)))
 
+#define SET_ZONEP(p, off, zone) \
+	do { if (p) { p->tm_gmtoff = off; p->tm_zone = zone; } } while (0)
+
 char *
 ws_strptime_p(const char *buf, const char *format, struct tm *tm)
 {
 #ifdef HAVE_STRPTIME
     return strptime(buf, format, tm);
 #else
-    return ws_strptime(buf, format, tm);
+    return ws_strptime(buf, format, tm, NULL);
 #endif
 }
 
 char *
-ws_strptime(const char *buf, const char *fmt, struct tm *tm)
+ws_strptime(const char *buf, const char *fmt, struct tm *tm, struct ws_timezone *zonep)
 {
 	unsigned char c;
 	const unsigned char *bp, *ep, *zname;
 	int alt_format, i, split_year = 0, neg = 0, state = 0,
 	    day_offset = -1, week_offset = 0, offs, mandatory;
 	const char *new_fmt;
+	long tm_gmtoff;
+	const char *tm_zone;
 
 	bp = (const unsigned char *)buf;
 
@@ -302,7 +283,7 @@ literal:
 			state |= S_MON | S_MDAY | S_YEAR;
 		    recurse:
 			bp = (const unsigned char *)ws_strptime((const char *)bp,
-							    new_fmt, tm);
+							    new_fmt, tm, zonep);
 			LEGAL_ALT(ALT_E);
 			continue;
 
@@ -399,27 +380,28 @@ literal:
 			LEGAL_ALT(ALT_O);
 			continue;
 
-#ifndef TIME_MAX
-#define TIME_MAX	INT64_MAX
-#endif
 		case 's':	/* seconds since the epoch */
 			{
-				time_t sse = 0;
-				uint64_t rulim = TIME_MAX;
+				int64_t secs;
+				const char *endptr;
+				time_t sse;
 
-				if (*bp < '0' || *bp > '9') {
+				/* Extract the seconds as a 64-bit signed number. */
+				if (!ws_strtoi64(bp, &endptr, &secs)) {
+					bp = NULL;
+					continue;
+				}
+				bp = endptr;
+
+				/* For now, reject times before the Epoch. */
+				if (secs < 0) {
 					bp = NULL;
 					continue;
 				}
 
-				do {
-					sse *= 10;
-					sse += *bp++ - '0';
-					rulim /= 10;
-				} while ((sse * 10 <= TIME_MAX) &&
-					 rulim && *bp >= '0' && *bp <= '9');
-
-				if (sse < 0 || (uint64_t)sse > TIME_MAX) {
+				/* Make sure it fits. */
+				sse = (time_t)secs;
+				if (sse != secs) {
 					bp = NULL;
 					continue;
 				}
@@ -549,12 +531,9 @@ literal:
 				if (!delim(*bp))
 					goto namedzone;
 				tm->tm_isdst = 0;
-#ifdef TM_GMTOFF
-				tm->TM_GMTOFF = 0;
-#endif
-#ifdef TM_ZONE
-				tm->TM_ZONE = utc;
-#endif
+				tm_gmtoff = 0;
+				tm_zone = utc;
+				SET_ZONEP(zonep, tm_gmtoff, tm_zone);
 				continue;
 			case '+':
 				neg = 0;
@@ -570,31 +549,30 @@ namedzone:
 				if (delim(bp[1]) &&
 				    ((*bp >= 'A' && *bp <= 'I') ||
 				     (*bp >= 'L' && *bp <= 'Y'))) {
-#ifdef TM_GMTOFF
 					/* Argh! No 'J'! */
 					if (*bp >= 'A' && *bp <= 'I')
-						tm->TM_GMTOFF =
+						tm_gmtoff =
 						    (int)*bp - ('A' - 1);
 					else if (*bp >= 'L' && *bp <= 'M')
-						tm->TM_GMTOFF = (int)*bp - 'A';
+						tm_gmtoff = (int)*bp - 'A';
 					else if (*bp >= 'N' && *bp <= 'Y')
-						tm->TM_GMTOFF = 'M' - (int)*bp;
-					tm->TM_GMTOFF *= SECSPERHOUR;
-#endif
-#ifdef TM_ZONE
-					tm->TM_ZONE = NULL; /* XXX */
-#endif
+						tm_gmtoff = 'M' - (int)*bp;
+					else {
+						/* Not reached. */
+						ws_critical("Not reached!");
+						goto out;
+					}
+					tm_gmtoff *= SECSPERHOUR;
+					tm_zone = NULL; /* XXX */
+					SET_ZONEP(zonep, tm_gmtoff, tm_zone);
 					bp++;
 					continue;
 				}
 				/* 'J' is local time */
 				if (delim(bp[1]) && *bp == 'J') {
-#ifdef TM_GMTOFF
-					tm->TM_GMTOFF = -timezone;
-#endif
-#ifdef TM_ZONE
-					tm->TM_ZONE = NULL; /* XXX */
-#endif
+					tm_gmtoff = -timezone;
+					tm_zone = NULL; /* XXX */
+					SET_ZONEP(zonep, tm_gmtoff, tm_zone);
 					bp++;
 					continue;
 				}
@@ -604,24 +582,18 @@ namedzone:
 				 */
 				ep = find_string(bp, &i, nast, NULL, 4);
 				if (ep != NULL) {
-#ifdef TM_GMTOFF
-					tm->TM_GMTOFF = (-5 - i) * SECSPERHOUR;
-#endif
-#ifdef TM_ZONE
-					tm->TM_ZONE = __UNCONST(nast[i]);
-#endif
+					tm_gmtoff = (-5 - i) * SECSPERHOUR;
+					tm_zone = nast[i];
+					SET_ZONEP(zonep, tm_gmtoff, tm_zone);
 					bp = ep;
 					continue;
 				}
 				ep = find_string(bp, &i, nadt, NULL, 4);
 				if (ep != NULL) {
 					tm->tm_isdst = 1;
-#ifdef TM_GMTOFF
-					tm->TM_GMTOFF = (-4 - i) * SECSPERHOUR;
-#endif
-#ifdef TM_ZONE
-					tm->TM_ZONE = __UNCONST(nadt[i]);
-#endif
+					tm_gmtoff = (-4 - i) * SECSPERHOUR;
+					tm_zone = nadt[i];
+					SET_ZONEP(zonep, tm_gmtoff, tm_zone);
 					bp = ep;
 					continue;
 				}
@@ -633,12 +605,9 @@ namedzone:
 						 NULL, 2);
 				if (ep != NULL) {
 					tm->tm_isdst = i;
-#ifdef TM_GMTOFF
-					tm->TM_GMTOFF = -timezone;
-#endif
-#ifdef TM_ZONE
-					tm->TM_ZONE = tzname[i];
-#endif
+					tm_gmtoff = -timezone;
+					tm_zone = tzname[i];
+					SET_ZONEP(zonep, tm_gmtoff, tm_zone);
 					bp = ep;
 					continue;
 				}
@@ -684,12 +653,9 @@ namedzone:
 			if (neg)
 				offs = -offs;
 			tm->tm_isdst = 0;	/* XXX */
-#ifdef TM_GMTOFF
-			tm->TM_GMTOFF = offs;
-#endif
-#ifdef TM_ZONE
-			tm->TM_ZONE = NULL;	/* XXX */
-#endif
+			tm_gmtoff = offs;
+			tm_zone = NULL;	/* XXX */
+			SET_ZONEP(zonep, tm_gmtoff, tm_zone);
 			continue;
 
 		/*
@@ -766,11 +732,10 @@ namedzone:
 					week_offset = 0;
 			}
 			tm->tm_wday = week_offset;
-			state |= S_WDAY;
 		}
 	}
 
-	return __UNCONST(bp);
+	return (char *)bp;
 }
 
 

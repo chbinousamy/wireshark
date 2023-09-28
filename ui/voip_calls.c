@@ -672,7 +672,7 @@ rtp_packet(void *tap_offset_ptr, packet_info *pinfo, epan_dissect_t *edt, void c
         /* if it is dynamic payload, let use the conv data to see if it is defined */
         if ( (strinfo->first_payload_type >= PT_UNDF_96) && (strinfo->first_payload_type <= PT_UNDF_127) ) {
             /* Use existing packet info if available */
-            p_packet_data = (struct _rtp_packet_info *)p_get_proto_data(wmem_file_scope(), pinfo, proto_get_id_by_filter_name("rtp"), 0);
+            p_packet_data = (struct _rtp_packet_info *)p_get_proto_data(wmem_file_scope(), pinfo, proto_get_id_by_filter_name("rtp"), RTP_CONVERSATION_PROTO_DATA);
             if (p_packet_data && p_packet_data->rtp_dyn_payload) {
                 const gchar *encoding_name = rtp_dyn_payload_get_name(p_packet_data->rtp_dyn_payload, strinfo->first_payload_type);
                 if (encoding_name) {
@@ -961,7 +961,7 @@ t38_packet(void *tap_offset_ptr, packet_info *pinfo, epan_dissect_t *edt, const 
         if (gai) conv_num = (int) gai->conv_num;
     }
 
-    /* if setup_frame_number in the t38 packet is 0, it means it was not set using an SDP or H245 sesion, which means we don't
+    /* if setup_frame_number in the t38 packet is 0, it means it was not set using an SDP or H245 session, which means we don't
      * have the associated Voip calls. It probably means that the packet was decoded using the default t38 port, or using "Decode as.."
      * in this case we create a "voip" call that only have t38 media (no signaling)
      * OR if we have not found the Setup message in the graph.
@@ -1731,7 +1731,7 @@ q931_calls_packet(void *tap_offset_ptr, packet_info *pinfo, epan_dissect_t *edt,
         if (callsinfo != NULL) {
             comment = NULL;
             if (tapinfo->h225_cstype == H225_SETUP) {
-                /* set te calling and called number from the Q931 packet */
+                /* set the calling and called number from the Q931 packet */
                 if (tapinfo->q931_calling_number != NULL) {
                     g_free(callsinfo->from_identity);
                     callsinfo->from_identity=g_strdup(tapinfo->q931_calling_number);

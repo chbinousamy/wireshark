@@ -325,7 +325,8 @@ WiresharkMainWindow::WiresharkMainWindow(QWidget *parent) :
     freeze_focus_(NULL),
     was_maximized_(false),
     capture_stopping_(false),
-    capture_filter_valid_(false)
+    capture_filter_valid_(false),
+    use_capturing_title_(false)
 #ifdef HAVE_LIBPCAP
     , capture_options_dialog_(NULL)
     , info_data_()
@@ -379,7 +380,7 @@ WiresharkMainWindow::WiresharkMainWindow(QWidget *parent) :
             << REGISTER_TOOLS_GROUP_UNSORTED;
 
     setWindowIcon(mainApp->normalIcon());
-    setTitlebarForCaptureFile();
+    updateTitlebar();
     setMenusForCaptureFile();
     setForCapturedPackets(false);
     setMenusForFileSet(false);
@@ -415,7 +416,7 @@ WiresharkMainWindow::WiresharkMainWindow(QWidget *parent) :
     connect(mainApp, SIGNAL(preferencesChanged()), this, SLOT(layoutToolbars()));
     connect(mainApp, SIGNAL(preferencesChanged()), this, SLOT(updatePreferenceActions()));
     connect(mainApp, SIGNAL(preferencesChanged()), this, SLOT(zoomText()));
-    connect(mainApp, SIGNAL(preferencesChanged()), this, SLOT(setTitlebarForCaptureFile()));
+    connect(mainApp, SIGNAL(preferencesChanged()), this, SLOT(updateTitlebar()));
 
     connect(mainApp, SIGNAL(updateRecentCaptureStatus(const QString &, qint64, bool)), this, SLOT(updateRecentCaptures()));
     updateRecentCaptures();
@@ -1857,6 +1858,19 @@ bool WiresharkMainWindow::testCaptureFileClose(QString before_what, FileCloseCon
 
     if (prefs.gui_ask_unsaved) {
         if (cf_has_unsaved_data(capture_file_.capFile())) {
+            if (context == Update) {
+                // We're being called from the software update window;
+                // don't spawn yet another dialog. Just try again later.
+                // XXX: The WinSparkle dialogs *aren't* modal, and a user
+                // can bring Wireshark to the foreground, close/save the
+                // file, and then click "Install Update" again, but it
+                // seems like many users don't expect that (and also don't
+                // know that Help->Check for Updates... exist, only knowing
+                // about the automatic check.) See #17658 and duplicates.
+                // Maybe we *should* spawn the dialog?
+                return false;
+            }
+
             QMessageBox msg_dialog;
             QString question;
             QString infotext;
@@ -2225,10 +2239,14 @@ void WiresharkMainWindow::initTimePrecisionFormatMenu()
 
     tp_actions[main_ui_->actionViewTimeDisplayFormatPrecisionAutomatic] = TS_PREC_AUTO;
     tp_actions[main_ui_->actionViewTimeDisplayFormatPrecisionSeconds] = TS_PREC_FIXED_SEC;
-    tp_actions[main_ui_->actionViewTimeDisplayFormatPrecisionDeciseconds] = TS_PREC_FIXED_DSEC;
-    tp_actions[main_ui_->actionViewTimeDisplayFormatPrecisionCentiseconds] = TS_PREC_FIXED_CSEC;
+    tp_actions[main_ui_->actionViewTimeDisplayFormatPrecision100Milliseconds] = TS_PREC_FIXED_100_MSEC;
+    tp_actions[main_ui_->actionViewTimeDisplayFormatPrecision10Milliseconds] = TS_PREC_FIXED_10_MSEC;
     tp_actions[main_ui_->actionViewTimeDisplayFormatPrecisionMilliseconds] = TS_PREC_FIXED_MSEC;
+    tp_actions[main_ui_->actionViewTimeDisplayFormatPrecision100Microseconds] = TS_PREC_FIXED_100_USEC;
+    tp_actions[main_ui_->actionViewTimeDisplayFormatPrecision10Microseconds] = TS_PREC_FIXED_10_USEC;
     tp_actions[main_ui_->actionViewTimeDisplayFormatPrecisionMicroseconds] = TS_PREC_FIXED_USEC;
+    tp_actions[main_ui_->actionViewTimeDisplayFormatPrecision100Nanoseconds] = TS_PREC_FIXED_100_NSEC;
+    tp_actions[main_ui_->actionViewTimeDisplayFormatPrecision10Nanoseconds] = TS_PREC_FIXED_10_NSEC;
     tp_actions[main_ui_->actionViewTimeDisplayFormatPrecisionNanoseconds] = TS_PREC_FIXED_NSEC;
 
     foreach(QAction* tpa, tp_actions.keys()) {
@@ -2396,24 +2414,8 @@ void WiresharkMainWindow::initFollowStreamMenus()
 // Titlebar
 void WiresharkMainWindow::setTitlebarForCaptureFile()
 {
-    if (capture_file_.capFile() && capture_file_.capFile()->filename) {
-        setWSWindowTitle(QString("[*]%1").arg(capture_file_.fileDisplayName()));
-        //
-        // XXX - on non-Mac platforms, put in the application
-        // name?  Or do so only for temporary files?
-        //
-        if (!capture_file_.capFile()->is_tempfile) {
-            //
-            // Set the file path; that way, for macOS, it'll set the
-            // "proxy icon".
-            //
-            setWindowFilePath(capture_file_.filePath());
-        }
-        setWindowModified(cf_has_unsaved_data(capture_file_.capFile()));
-    } else {
-        /* We have no capture file. */
-        setWSWindowTitle();
-    }
+    use_capturing_title_ = false;
+    updateTitlebar();
 }
 
 QString WiresharkMainWindow::replaceWindowTitleVariables(QString title)
@@ -2490,10 +2492,30 @@ void WiresharkMainWindow::setWSWindowTitle(QString title)
 
 void WiresharkMainWindow::setTitlebarForCaptureInProgress()
 {
-    if (capture_file_.capFile()) {
+    use_capturing_title_ = true;
+    updateTitlebar();
+}
+
+void WiresharkMainWindow::updateTitlebar()
+{
+    if (use_capturing_title_ && capture_file_.capFile()) {
         setWSWindowTitle(tr("Capturing from %1").arg(cf_get_tempfile_source(capture_file_.capFile())));
+    } else if (capture_file_.capFile() && capture_file_.capFile()->filename) {
+        setWSWindowTitle(QString("[*]%1").arg(capture_file_.fileDisplayName()));
+        //
+        // XXX - on non-Mac platforms, put in the application
+        // name?  Or do so only for temporary files?
+        //
+        if (!capture_file_.capFile()->is_tempfile) {
+            //
+            // Set the file path; that way, for macOS, it'll set the
+            // "proxy icon".
+            //
+            setWindowFilePath(capture_file_.filePath());
+        }
+        setWindowModified(cf_has_unsaved_data(capture_file_.capFile()));
     } else {
-        /* We have no capture in progress. */
+        /* We have no capture file. */
         setWSWindowTitle();
     }
 }
@@ -2670,7 +2692,7 @@ void WiresharkMainWindow::setWindowIcon(const QIcon &icon) {
 }
 
 void WiresharkMainWindow::updateForUnsavedChanges() {
-    setTitlebarForCaptureFile();
+    updateTitlebar();
     setMenusForCaptureFile();
 }
 
@@ -2684,7 +2706,7 @@ void WiresharkMainWindow::changeEvent(QEvent* event)
             main_ui_->retranslateUi(this);
             // make sure that the "Clear Menu" item is retranslated
             mainApp->emitAppSignal(WiresharkApplication::RecentCapturesChanged);
-            setTitlebarForCaptureFile();
+            updateTitlebar();
             break;
         case QEvent::LocaleChange: {
             QString locale = QLocale::system().name();
@@ -2838,6 +2860,12 @@ void WiresharkMainWindow::removeMenuActions(QList<QAction *> &actions, int menu_
                 cur_menu = submenu;
             }
             cur_menu->removeAction(action);
+            // Remove empty submenus.
+            while (cur_menu != main_ui_->menuTools) {
+                QMenu *empty_menu = (cur_menu->isEmpty() ? cur_menu : NULL);
+                cur_menu = dynamic_cast<QMenu *>(cur_menu->parent());
+                delete empty_menu;
+            }
             break;
         }
         default:

@@ -88,11 +88,13 @@ SubjectKeyIdentifier
 ScramblerCapabilities
 CiplusInfo
 CicamBrandId
+SecurityLevel
 
 #.PDU
 ScramblerCapabilities
 CiplusInfo
 CicamBrandId
+SecurityLevel
 
 
 #.REGISTER
@@ -156,6 +158,10 @@ EntrustVersionInfo        B "1.2.840.113533.7.65.0" "id-ce-entrustVersionInfo"
 #.NO_EMIT
 
 #.TYPE_RENAME
+
+#.TYPE_ATTR
+ScramblerCapabilities/capability DISPLAY = BASE_DEC STRINGS = VALS64(ciplus_scr_cap)
+SecurityLevel DISPLAY = BASE_DEC STRINGS = VALS64(ciplus_security_level)
 
 #.FIELD_RENAME
 CRLReferral/issuer  crlr_issuer

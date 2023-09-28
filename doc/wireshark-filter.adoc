@@ -204,8 +204,8 @@ are equivalent:
 
 Boolean values are either true or false.  In a display filter expression
 testing the value of a Boolean field, true is expressed as the word `true`
-(case-insentive) or any non-zero number.  False is expressed as
-`false` (case-insentivie) or the number zero. For example, a token-ring packet's
+(case-insensitive) or any non-zero number.  False is expressed as
+`false` (case-insensitive) or the number zero. For example, a token-ring packet's
 source route field is Boolean.  To find any source-routed packets, a display
 filter would be any of the following:
 
@@ -315,10 +315,15 @@ month-year-time format:
     "2020-07-04T12:34:56"
     "Sep 26, 2004 23:18:04.954975"
 
-The 'T' separator in ISO 8601 can be omitted. ISO 8601 supports timezone
-designators as UTC or an offset from UTC. Legacy formats can append the
-value "UTC" at the end to specify time in Coordinated Universal Time.
-Otherwise date and time values are interpreted as local time.
+The 'T' separator in ISO 8601 can be omitted. The timezone can be given
+as "Z" or an offset from UTC.
+
+When not using ISO 8601 the timezone can be given as the strings "UTC", "GMT"
+or "UT" for UTC or also given as an offset from UTC, plus some North American and Nautical/Military
+designations (https://man.netbsd.org/strptime.3[see the specification for %z in strptime(3)]).
+Note that arbitrary timezone names are not supported however.
+
+If the timezone is omitted then date and time values are interpreted as local time.
 
 === The slice operator
 
@@ -547,6 +552,7 @@ highest to lowest precedence:
 
     not, !    Logical NOT   (right-associative)
     and, &&   Logical AND   (left-associative)
+    xor, ^^   Logical XOR   (left-associative)
     or,  ||   Logical OR    (left-associative)
 
 The evaluation is always performed left to right. Expressions can be grouped
@@ -573,7 +579,7 @@ will match all packets that do not contain the llc protocol.
 The third filter expression includes the constraint that offset 199 in the
 frame exists, in other words the length of the frame is at least 200.
 
-Each comparison has an implicit exists test for any field value. Care must
+Because each comparison has an implicit exists test for field values care must
 be taken when using the display filter to remove noise from
 the packet trace. If, for example, you want to filter out all IP
 multicast packets to address 224.1.2.3, then using:
@@ -594,7 +600,7 @@ two expressions:
 
 The first filter uses "not ip.dst" to include all non-IP packets and then
 lets "ip.dst ne 224.1.2.3" filter out the unwanted IP packets. The
-second filter also negates the implicit existance test and so is
+second filter also negates the implicit existence test and so is
 a shorter way to write the first.
 
 == FILTER FIELD REFERENCE

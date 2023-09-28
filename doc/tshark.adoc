@@ -242,6 +242,10 @@ every hour on the hour.
 *packets*:__value__ switch to the next file after it contains __value__
 packets.
 
+*printname*:__filename__ print the name of the most recently written file
+to __filename__ after the file is closed. __filename__ can be `stdout` or `-`
+for standard output, or `stderr` for standard error.
+
 *nametimenum*:__value__ Choose between two save filename templates.  If
 __value__ is 1, make running file number part before start time part; this is
 the original and default behaviour (e.g. log_00001_20230714164426.pcap).  If
@@ -883,7 +887,7 @@ whether the *-V* option was specified.  This is the default.
 +
 --
 Specifies the directory into which temporary files (including capture
-files) are to be written.  The default behavior on UNIX-compatible sytems,
+files) are to be written.  The default behavior on UNIX-compatible systems,
 such as Linux, macOS, \*BSD, Solaris, and AIX, is to use the environment
 variable __$TMPDIR__ if set, and the system default, typically __/tmp__, if it
 is not.  On Windows, the __%TEMP%__ environment variable is used, which
@@ -1441,7 +1445,7 @@ Calculate the distribution of F1AP packets, grouped by packet types.
 *-z* f5_tmm_dist,tree[,__filter__]::
 +
 --
-Calculate the F5 Ethernet trailer Traffic Managment Microkernel distribution.
+Calculate the F5 Ethernet trailer Traffic Management Microkernel distribution.
 Displayed information is the number of packets and bytes, grouped by the TMM
 slot and number, whether packets are ingress or egress, and whether there is
 a flow ID and virtual server name, a flow ID without virtual server name, or
@@ -1516,10 +1520,14 @@ __mode__ specifies the output mode.  It can be one of:
   ebcdic EBCDIC output with dots for non-printable characters
   hex    Hexadecimal and ASCII data with offsets
   raw    Hexadecimal data
+  utf-8  UTF-8 output with REPLACEMENT CHARACTERs for invalid sequences
   yaml   YAML format
 
-Since the output in *ascii* or *ebcdic* mode may contain newlines, the length
-of each section of output plus a newline precedes each section of output.
+Since the output in *ascii*, *ebcdic*, or *utf-8* mode may contain newlines,
+each section of output is preceded by its length in bytes plus a newline.
+(Note that for *utf-8* this is not UTF-8 characters, and may be different
+than the length as transmitted due to the substitution of replacement
+characters for invalid sequences.)
 
 __filter__ specifies the stream to be displayed. There are three formats:
 
@@ -1623,7 +1631,7 @@ can be one of:
   dtap_mm    DTAP Mobility Management
   dtap_rr    DTAP Radio Resource Management
   dtap_sacch SACCH Radio Resource Management
-  dtap_sm    DTAP GPRS Session Managment
+  dtap_sm    DTAP GPRS Session Management
   dtap_sms   DTAP Short Message Service
   dtap_ss    DTAP Supplementary Services
   dtap_tp    DTAP Special Conformance Testing Functions

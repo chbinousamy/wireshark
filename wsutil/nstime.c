@@ -32,7 +32,7 @@ void nstime_set_zero(nstime_t *nstime)
 }
 
 /* is the given nstime_t currently zero? */
-gboolean nstime_is_zero(const nstime_t *nstime)
+bool nstime_is_zero(const nstime_t *nstime)
 {
     return nstime->secs == 0 && nstime->nsecs == 0;
 }
@@ -44,16 +44,16 @@ gboolean nstime_is_zero(const nstime_t *nstime)
 void nstime_set_unset(nstime_t *nstime)
 {
     nstime->secs  = 0;
-    nstime->nsecs = G_MAXINT;
+    nstime->nsecs = INT_MAX;
 }
 
 /* is the given nstime_t currently (0,maxint)? */
-gboolean nstime_is_unset(const nstime_t *nstime)
+bool nstime_is_unset(const nstime_t *nstime)
 {
-    if(nstime->secs == 0 && nstime->nsecs == G_MAXINT) {
-        return TRUE;
+    if(nstime->secs == 0 && nstime->nsecs == INT_MAX) {
+        return true;
     } else {
-        return FALSE;
+        return false;
     }
 }
 
@@ -155,9 +155,9 @@ int nstime_cmp (const nstime_t *a, const nstime_t *b )
     }
 }
 
-guint nstime_hash(const nstime_t *nstime)
+unsigned nstime_hash(const nstime_t *nstime)
 {
-    gint64 val1 = (gint64)nstime->secs;
+    int64_t val1 = (int64_t)nstime->secs;
 
     return g_int64_hash(&val1) ^ g_int_hash(&nstime->nsecs);
 }
@@ -199,10 +199,10 @@ double nstime_to_sec(const nstime_t *nstime)
 #define TIME_T_MAX ((time_t) (~ (time_t) 0 - TIME_T_MIN))
 #endif
 
-static gboolean
-common_filetime_to_nstime(nstime_t *nstime, guint64 ftsecs, int nsecs)
+static bool
+common_filetime_to_nstime(nstime_t *nstime, uint64_t ftsecs, int nsecs)
 {
-    gint64 secs;
+    int64_t secs;
 
     /*
      * Shift the seconds from the Windows epoch to the UN*X epoch.
@@ -213,11 +213,11 @@ common_filetime_to_nstime(nstime_t *nstime, guint64 ftsecs, int nsecs)
      * maximum 64-bit signed value, so the difference between them
      * should also fit in a 64-bit signed value.
      */
-    secs = (gint64)ftsecs - EPOCH_DELTA_1601_01_01_00_00_00_UTC;
+    secs = (int64_t)ftsecs - EPOCH_DELTA_1601_01_01_00_00_00_UTC;
 
     if (!(TIME_T_MIN <= secs && secs <= TIME_T_MAX)) {
         /* The result won't fit in a time_t */
-        return FALSE;
+        return false;
     }
 
     /*
@@ -225,20 +225,20 @@ common_filetime_to_nstime(nstime_t *nstime, guint64 ftsecs, int nsecs)
      */
     nstime->secs = (time_t) secs;
     nstime->nsecs = nsecs;
-    return TRUE;
+    return true;
 }
 
 /*
  * function: filetime_to_nstime
  * converts a Windows FILETIME value to an nstime_t
- * returns TRUE if the conversion succeeds, FALSE if it doesn't
+ * returns true if the conversion succeeds, false if it doesn't
  * (for example, with a 32-bit time_t, the time overflows or
  * underflows time_t)
  */
-gboolean
-filetime_to_nstime(nstime_t *nstime, guint64 filetime)
+bool
+filetime_to_nstime(nstime_t *nstime, uint64_t filetime)
 {
-    guint64 ftsecs;
+    uint64_t ftsecs;
     int nsecs;
 
     /*
@@ -255,14 +255,14 @@ filetime_to_nstime(nstime_t *nstime, guint64 filetime)
  * function: nsfiletime_to_nstime
  * converts a Windows FILETIME-like value, but given in nanoseconds
  * rather than 10ths of microseconds, to an nstime_t
- * returns TRUE if the conversion succeeds, FALSE if it doesn't
+ * returns true if the conversion succeeds, false if it doesn't
  * (for example, with a 32-bit time_t, the time overflows or
  * underflows time_t)
  */
-gboolean
-nsfiletime_to_nstime(nstime_t *nstime, guint64 nsfiletime)
+bool
+nsfiletime_to_nstime(nstime_t *nstime, uint64_t nsfiletime)
 {
-    guint64 ftsecs;
+    uint64_t ftsecs;
     int nsecs;
 
     /* Split into seconds and nanoseconds. */
@@ -277,7 +277,8 @@ nsfiletime_to_nstime(nstime_t *nstime, guint64 nsfiletime)
  * parses a character string for a date and time given in
  * ISO 8601 date-time format (eg: 2014-04-07T05:41:56.782+00:00)
  * and converts to an nstime_t
- * returns number of chars parsed on success, or 0 on failure
+ * returns pointer to the first character after the last character
+ * parsed on success, or NULL on failure
  *
  * NB. ISO 8601 is actually a lot more flexible than the above format,
  * much to a developer's chagrin. The "basic format" is distinguished from
@@ -299,20 +300,18 @@ nsfiletime_to_nstime(nstime_t *nstime, guint64 nsfiletime)
  * YYYY-Www-D, YYYY-DDD, etc. For a relatively easy introduction to
  * these formats, see wikipedia: https://en.wikipedia.org/wiki/ISO_8601
  */
-guint8
+const char *
 iso8601_to_nstime(nstime_t *nstime, const char *ptr, iso8601_fmt_e format)
 {
     struct tm tm;
-    gint n_scanned = 0;
-    gint n_chars = 0;
-    guint frac = 0;
-    gint off_hr = 0;
-    gint off_min = 0;
-    guint8 ret_val = 0;
-    const char *start = ptr;
+    int n_scanned = 0;
+    int n_chars = 0;
+    unsigned frac = 0;
+    int off_hr = 0;
+    int off_min = 0;
     char sign = '\0';
-    gboolean has_separator = FALSE;
-    gboolean have_offset = FALSE;
+    bool has_separator = false;
+    bool have_offset = false;
 
     memset(&tm, 0, sizeof(tm));
     tm.tm_isdst = -1;
@@ -322,7 +321,7 @@ iso8601_to_nstime(nstime_t *nstime, const char *ptr, iso8601_fmt_e format)
      * separator. */
     for (n_scanned = 0; n_scanned < 4; n_scanned++) {
         if (!g_ascii_isdigit(*ptr)) {
-            return 0;
+            return NULL;
         }
         tm.tm_year *= 10;
         tm.tm_year += *ptr++ - '0';
@@ -330,26 +329,26 @@ iso8601_to_nstime(nstime_t *nstime, const char *ptr, iso8601_fmt_e format)
     if (*ptr == '-') {
         switch (format) {
             case ISO8601_DATETIME_BASIC:
-                return 0;
+                return NULL;
 
             case ISO8601_DATETIME:
             case ISO8601_DATETIME_AUTO:
             default:
-                has_separator = TRUE;
+                has_separator = true;
                 ptr++;
         };
     } else if (g_ascii_isdigit(*ptr)) {
         switch (format) {
             case ISO8601_DATETIME:
-                return 0;
+                return NULL;
 
             case ISO8601_DATETIME_BASIC:
             case ISO8601_DATETIME_AUTO:
             default:
-                has_separator = FALSE;
+                has_separator = false;
         };
     } else {
-        return 0;
+        return NULL;
     }
 
     tm.tm_year -= 1900; /* struct tm expects number of years since 1900 */
@@ -375,7 +374,7 @@ iso8601_to_nstime(nstime_t *nstime, const char *ptr, iso8601_fmt_e format)
         ptr += n_chars;
     }
     else {
-        return 0;
+        return NULL;
     }
 
     if (*ptr == 'T' || *ptr == ' ') {
@@ -388,7 +387,7 @@ iso8601_to_nstime(nstime_t *nstime, const char *ptr, iso8601_fmt_e format)
         /* Allow no separator between date and time iff we have no
            separator between units. (Some extended formats may negotiate
            no separator here, so this could be changed.) */
-        return 0;
+        return NULL;
     }
 
     /* Now we're on to the time part. We'll require a minimum of hours and
@@ -403,7 +402,7 @@ iso8601_to_nstime(nstime_t *nstime, const char *ptr, iso8601_fmt_e format)
     }
     else {
         /* didn't get hours and minutes */
-        return 0;
+        return NULL;
     }
 
     /* Test for (whole) seconds */
@@ -413,7 +412,7 @@ iso8601_to_nstime(nstime_t *nstime, const char *ptr, iso8601_fmt_e format)
         if (1 > sscanf(ptr, has_separator ? ":%2u%n" : "%2u%n",
                 &tm.tm_sec, &n_chars)) {
             /* Couldn't get them */
-            return 0;
+            return NULL;
         }
         ptr += n_chars;
 
@@ -453,7 +452,7 @@ iso8601_to_nstime(nstime_t *nstime, const char *ptr, iso8601_fmt_e format)
     /* Validate what we got so far. mktime() doesn't care about strange
        values but we should at least start with something valid */
     if (!tm_is_valid(&tm)) {
-        return 0;
+        return NULL;
     }
 
     /* Check for a time zone offset */
@@ -464,7 +463,7 @@ iso8601_to_nstime(nstime_t *nstime, const char *ptr, iso8601_fmt_e format)
         /* We have a UTC-relative offset */
         if (*ptr == 'Z') {
             off_hr = off_min = 0;
-            have_offset = TRUE;
+            have_offset = true;
             ptr++;
         }
         else {
@@ -472,7 +471,7 @@ iso8601_to_nstime(nstime_t *nstime, const char *ptr, iso8601_fmt_e format)
             n_scanned = sscanf(ptr, "%3d%n", &off_hr, &n_chars);
             if (n_scanned >= 1) {
                 /* Definitely got hours */
-                have_offset = TRUE;
+                have_offset = true;
                 ptr += n_chars;
                 n_scanned = sscanf(ptr, *ptr == ':' ? ":%2d%n" : "%2d%n", &off_min, &n_chars);
                 if (n_scanned >= 1) {
@@ -482,7 +481,7 @@ iso8601_to_nstime(nstime_t *nstime, const char *ptr, iso8601_fmt_e format)
             }
             else {
                 /* Didn't get a valid offset, treat as if there's none at all */
-                have_offset = FALSE;
+                have_offset = false;
             }
         }
     }
@@ -508,8 +507,7 @@ iso8601_to_nstime(nstime_t *nstime, const char *ptr, iso8601_fmt_e format)
         nstime->secs = mktime(&tm);
     }
     nstime->nsecs = frac;
-    ret_val = (guint)(ptr-start);
-    return ret_val;
+    return ptr;
 }
 
 /*
@@ -518,20 +516,19 @@ iso8601_to_nstime(nstime_t *nstime, const char *ptr, iso8601_fmt_e format)
  * a floating point number containing a Unix epoch date-time
  * format (e.g. 1600000000.000 for Sun Sep 13 05:26:40 AM PDT 2020)
  * and converts to an nstime_t
- * returns number of chars parsed on success, or 0 on failure
+ * returns pointer to the first character after the last character
+ * parsed on success, or NULL on failure
  *
  * Reference: https://en.wikipedia.org/wiki/Unix_time
  */
-guint8
+const char *
 unix_epoch_to_nstime(nstime_t *nstime, const char *ptr)
 {
-    gint64 secs;
+    int64_t secs;
     const char *ptr_new;
 
-    gint n_chars = 0;
-    guint frac = 0;
-    guint8 ret_val = 0;
-    const char *start = ptr;
+    int n_chars = 0;
+    unsigned frac = 0;
 
     nstime_set_unset(nstime);
 
@@ -540,18 +537,18 @@ unix_epoch_to_nstime(nstime_t *nstime, const char *ptr)
      * might be 64-bit.
      */
     if (!ws_strtoi64(ptr, &ptr_new, &secs)) {
-        return 0;
+        return NULL;
     }
 
     /* For now, reject times before the Epoch. */
     if (secs < 0) {
-        return 0;
+        return NULL;
     }
 
     /* Make sure it fits. */
     nstime->secs = (time_t) secs;
     if (nstime->secs != secs) {
-        return 0;
+        return NULL;
     }
 
     /* Now let's test for fractional seconds */
@@ -583,10 +580,7 @@ unix_epoch_to_nstime(nstime_t *nstime, const char *ptr)
         frac = 0;
     }
     nstime->nsecs = frac;
-
-    /* return pointer shift */
-    ret_val = (guint)(ptr_new-start);
-    return ret_val;
+    return ptr_new;
 }
 
 size_t nstime_to_iso8601(char *buf, size_t buf_size, const nstime_t *nstime)
@@ -642,8 +636,7 @@ size_t nstime_to_iso8601(char *buf, size_t buf_size, const nstime_t *nstime)
 
 void nstime_to_unix(char *buf, size_t buf_size, const nstime_t *nstime)
 {
-    display_signed_time(buf, buf_size, (gint64) nstime->secs,
-                        nstime->nsecs, WS_TSPREC_NSEC);
+    display_signed_time(buf, buf_size, nstime, WS_TSPREC_NSEC);
 }
 
 /*

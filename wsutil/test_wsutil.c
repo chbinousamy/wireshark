@@ -308,7 +308,7 @@ static void test_bytes_to_str(void)
 {
     char *str;
 
-    const guint8 buf[] = { 1, 2, 3};
+    const uint8_t buf[] = { 1, 2, 3};
 
     str = bytes_to_str(NULL, buf, sizeof(buf));
     g_assert_cmpstr(str, ==, "010203");
@@ -319,7 +319,7 @@ static void test_bytes_to_str_punct(void)
 {
     char *str;
 
-    const guint8 buf[] = { 1, 2, 3};
+    const uint8_t buf[] = { 1, 2, 3};
 
     str = bytes_to_str_punct(NULL, buf, sizeof(buf), ':');
     g_assert_cmpstr(str, ==, "01:02:03");
@@ -330,7 +330,7 @@ static void test_bytes_to_str_punct_maxlen(void)
 {
     char *str;
 
-    const guint8 buf[] = { 1, 2, 3};
+    const uint8_t buf[] = { 1, 2, 3};
 
     str = bytes_to_str_punct_maxlen(NULL, buf, sizeof(buf), ':', 4);
     g_assert_cmpstr(str, ==, "01:02:03");
@@ -357,7 +357,7 @@ static void test_bytes_to_str_maxlen(void)
 {
     char *str;
 
-    const guint8 buf[] = { 1, 2, 3};
+    const uint8_t buf[] = { 1, 2, 3};
 
     str = bytes_to_str_maxlen(NULL, buf, sizeof(buf), 4);
     g_assert_cmpstr(str, ==, "010203");
@@ -384,7 +384,7 @@ static void test_bytes_to_string_trunc1(void)
 {
     char *str;
 
-    const guint8 buf[] = {
+    const uint8_t buf[] = {
         0x11, 0x22, 0x33, 0x44, 0x55, 0x66, 0x77, 0x88, 0x99, 0xAA,
         0x11, 0x22, 0x33, 0x44, 0x55, 0x66, 0x77, 0x88, 0x99, 0xAA,
         0x11, 0x22, 0x33, 0x44, 0x55, 0x66, 0x77, 0x88, 0x99, 0xAA,
@@ -408,7 +408,7 @@ static void test_bytes_to_string_punct_trunc1(void)
 {
     char *str;
 
-    const guint8 buf[] = {
+    const uint8_t buf[] = {
         0x11, 0x22, 0x33, 0x44, 0x55, 0x66, 0x77, 0x88, 0x99, 0xAA,
         0x11, 0x22, 0x33, 0x44, 0x55, 0x66, 0x77, 0x88, 0x99, 0xAA,
         0x11, 0x22, 0x33, 0x44, 0x55, 0x66, 0x77, 0x88, 0x99, 0xAA,
@@ -576,7 +576,7 @@ static void test_int64_to_str_back(void)
 void test_nstime_from_iso8601(void)
 {
     char *str;
-    size_t chars;
+    const char *endp;
     nstime_t result, expect;
     struct tm tm1;
 
@@ -593,8 +593,9 @@ void test_nstime_from_iso8601(void)
     str = "2013-05-30T23:45:25.349124";
     expect.secs = mktime(&tm1);
     expect.nsecs = 349124 * 1000;
-    chars = iso8601_to_nstime(&result, str, ISO8601_DATETIME_AUTO);
-    g_assert_cmpuint(chars, ==, strlen(str));
+    endp = iso8601_to_nstime(&result, str, ISO8601_DATETIME_AUTO);
+    g_assert_nonnull(endp);
+    g_assert(*endp == '\0');
     g_assert_cmpint(result.secs, ==, expect.secs);
     g_assert_cmpint(result.nsecs, ==, expect.nsecs);
 
@@ -602,8 +603,9 @@ void test_nstime_from_iso8601(void)
     str = "2013-05-30T23:45:25.349124Z";
     expect.secs = mktime_utc(&tm1);
     expect.nsecs = 349124 * 1000;
-    chars = iso8601_to_nstime(&result, str, ISO8601_DATETIME_AUTO);
-    g_assert_cmpuint(chars, ==, strlen(str));
+    endp = iso8601_to_nstime(&result, str, ISO8601_DATETIME_AUTO);
+    g_assert_nonnull(endp);
+    g_assert(*endp == '\0');
     g_assert_cmpint(result.secs, ==, expect.secs);
     g_assert_cmpint(result.nsecs, ==, expect.nsecs);
 
@@ -611,8 +613,9 @@ void test_nstime_from_iso8601(void)
     str = "2013-05-30T23:45:25.349124+01:00";
     expect.secs = mktime_utc(&tm1) - 1 * 60 * 60;
     expect.nsecs = 349124 * 1000;
-    chars = iso8601_to_nstime(&result, str, ISO8601_DATETIME_AUTO);
-    g_assert_cmpuint(chars, ==, strlen(str));
+    endp = iso8601_to_nstime(&result, str, ISO8601_DATETIME_AUTO);
+    g_assert_nonnull(endp);
+    g_assert(*endp == '\0');
     g_assert_cmpint(result.secs, ==, expect.secs);
     g_assert_cmpint(result.nsecs, ==, expect.nsecs);
 
@@ -620,8 +623,9 @@ void test_nstime_from_iso8601(void)
     str = "2013-05-30T23:45:25.349124+0100";
     expect.secs = mktime_utc(&tm1) - 1 * 60 * 60;
     expect.nsecs = 349124 * 1000;
-    chars = iso8601_to_nstime(&result, str, ISO8601_DATETIME_AUTO);
-    g_assert_cmpuint(chars, ==, strlen(str));
+    endp = iso8601_to_nstime(&result, str, ISO8601_DATETIME_AUTO);
+    g_assert_nonnull(endp);
+    g_assert(*endp == '\0');
     g_assert_cmpint(result.secs, ==, expect.secs);
     g_assert_cmpint(result.nsecs, ==, expect.nsecs);
 
@@ -629,8 +633,9 @@ void test_nstime_from_iso8601(void)
     str = "2013-05-30T23:45:25.349124+01";
     expect.secs = mktime_utc(&tm1) - 1 * 60 * 60;
     expect.nsecs = 349124 * 1000;
-    chars = iso8601_to_nstime(&result, str, ISO8601_DATETIME_AUTO);
-    g_assert_cmpuint(chars, ==, strlen(str));
+    endp = iso8601_to_nstime(&result, str, ISO8601_DATETIME_AUTO);
+    g_assert_nonnull(endp);
+    g_assert(*endp == '\0');
     g_assert_cmpint(result.secs, ==, expect.secs);
     g_assert_cmpint(result.nsecs, ==, expect.nsecs);
 }

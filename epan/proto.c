@@ -348,11 +348,15 @@ static expert_field ei_type_length_mismatch_error = EI_INIT;
 static expert_field ei_type_length_mismatch_warn = EI_INIT;
 static void register_type_length_mismatch(void);
 
-/* Handle number string decoding errors with expert info */
-static int proto_number_string_decoding_error = -1;
-static expert_field ei_number_string_decoding_failed_error = EI_INIT;
-static expert_field ei_number_string_decoding_erange_error = EI_INIT;
-static void register_number_string_decodinws_error(void);
+/* Handle byte array string decoding errors with expert info */
+static int proto_byte_array_string_decoding_error = -1;
+static expert_field ei_byte_array_string_decoding_failed_error = EI_INIT;
+static void register_byte_array_string_decodinws_error(void);
+
+/* Handle date and time string decoding errors with expert info */
+static int proto_date_time_string_decoding_error = -1;
+static expert_field ei_date_time_string_decoding_failed_error = EI_INIT;
+static void register_date_time_string_decodinws_error(void);
 
 /* Handle string errors expert info */
 static int proto_string_errors = -1;
@@ -586,7 +590,8 @@ proto_init(GSList *register_all_plugin_protocols_list,
 	/* Register the pseudo-protocols used for exceptions. */
 	register_show_exception();
 	register_type_length_mismatch();
-	register_number_string_decodinws_error();
+	register_byte_array_string_decodinws_error();
+	register_date_time_string_decodinws_error();
 	register_string_errors();
 	ftypes_register_pseudofields();
 	col_register_protocol();
@@ -2594,6 +2599,13 @@ detect_trailing_stray_characters(guint encoding, const char *string, gint length
 	}
 }
 
+static void
+free_fvalue_cb(void *data)
+{
+	fvalue_t *fv = (fvalue_t*)data;
+	fvalue_free(fv);
+}
+
 /* Add an item to a proto_tree, using the text label registered to that item;
    the item is extracted from the tvbuff handed to it. */
 static proto_item *
@@ -2610,6 +2622,13 @@ proto_tree_new_item(field_info *new_fi, proto_tree *tree,
 	const char *stringval = NULL;
 	nstime_t    time_stamp;
 	gboolean    length_error;
+
+	/* Ensure that the newly created fvalue_t is freed if we throw an
+	 * exception before adding it to the tree. (gcc creates clobbering
+	 * when it optimizes the equivalent TRY..EXCEPT implementation.)
+	 * XXX: Move the new_field_info() call inside here?
+	 */
+	CLEANUP_PUSH(free_fvalue_cb, new_fi->value);
 
 	switch (new_fi->hfinfo->type) {
 		case FT_NONE:
@@ -3057,8 +3076,12 @@ proto_tree_new_item(field_info *new_fi, proto_tree *tree,
 
 	/* Don't add new node to proto_tree until now so that any exceptions
 	 * raised by a tvbuff access method doesn't leave junk in the proto_tree. */
-	/* XXX. wouldn't be better to add this item to tree, with some special flag (FI_EXCEPTION?)
-	 *      to know which item caused exception? */
+	/* XXX. wouldn't be better to add this item to tree, with some special
+	 * flag (FI_EXCEPTION?) to know which item caused exception? For
+	 * strings and bytes, we would have to set new_fi->value to something
+	 * non-NULL, or otherwise ensure that proto_item_fill_display_label
+	 * could handle NULL values. */
+	CLEANUP_POP
 	pi = proto_tree_add_node(tree, new_fi);
 
 	switch (new_fi->hfinfo->type) {
@@ -4292,7 +4315,7 @@ proto_tree_add_bytes_item(proto_tree *tree, int hfindex, tvbuff_t *tvb,
 	field_info	  *new_fi;
 	GByteArray	  *bytes = retval;
 	GByteArray	  *created_bytes = NULL;
-	gint		   saved_err = 0;
+	gboolean	   failed = FALSE;
 	guint32		   n = 0;
 	header_field_info *hfinfo;
 	gboolean	   generate = (bytes || tree) ? TRUE : FALSE;
@@ -4323,29 +4346,36 @@ proto_tree_add_bytes_item(proto_tree *tree, int hfindex, tvbuff_t *tvb,
 			bytes = created_bytes = g_byte_array_new();
 		}
 
-		/* bytes might be NULL after this, but can't add expert error until later */
+		/*
+		 * bytes might be NULL after this, but can't add expert
+		 * error until later; if it's NULL, just note that
+		 * it failed.
+		 */
 		bytes = tvb_get_string_bytes(tvb, start, length, encoding, bytes, endoff);
-
-		/* grab the errno now before it gets overwritten */
-		saved_err = errno;
+		if (bytes == NULL)
+			failed = TRUE;
 	}
 	else if (generate) {
 		tvb_ensure_bytes_exist(tvb, start, length);
-
-		if (!bytes) {
-			/* caller doesn't care about return value, but we need it to
-			   call tvb_get_string_bytes() and set the tree later */
-			bytes = created_bytes = g_byte_array_new();
-		}
 
 		if (hfinfo->type == FT_UINT_BYTES) {
 			n = length; /* n is now the "header" length */
 			length = get_uint_value(tree, tvb, start, n, encoding);
 			/* length is now the value's length; only store the value in the array */
 			tvb_ensure_bytes_exist(tvb, start + n, length);
+			if (!bytes) {
+				/* caller doesn't care about return value, but
+				 * we may need it to set the tree later */
+				bytes = created_bytes = g_byte_array_new();
+			}
 			g_byte_array_append(bytes, tvb_get_ptr(tvb, start + n, length), length);
 		}
 		else if (length > 0) {
+			if (!bytes) {
+				/* caller doesn't care about return value, but
+				 * we may need it to set the tree later */
+				bytes = created_bytes = g_byte_array_new();
+			}
 			g_byte_array_append(bytes, tvb_get_ptr(tvb, start, length), length);
 		}
 
@@ -4353,7 +4383,8 @@ proto_tree_add_bytes_item(proto_tree *tree, int hfindex, tvbuff_t *tvb,
 		    *endoff = start + n + length;
 	}
 
-	if (err) *err = saved_err;
+	if (err)
+		*err = failed ? EINVAL : 0;
 
 	CHECK_FOR_NULL_TREE_AND_FREE(tree,
 		{
@@ -4375,10 +4406,8 @@ proto_tree_add_bytes_item(proto_tree *tree, int hfindex, tvbuff_t *tvb,
 	new_fi = new_field_info(tree, hfinfo, tvb, start, n + length);
 
 	if (encoding & ENC_STRING) {
-		if (saved_err == ERANGE)
-		    expert_add_info(NULL, tree, &ei_number_string_decoding_erange_error);
-		else if (!bytes || saved_err != 0)
-		    expert_add_info(NULL, tree, &ei_number_string_decoding_failed_error);
+		if (failed)
+		    expert_add_info(NULL, tree, &ei_byte_array_string_decoding_failed_error);
 
 		if (bytes)
 		    proto_tree_set_bytes_gbytearray(new_fi, bytes);
@@ -4391,6 +4420,12 @@ proto_tree_add_bytes_item(proto_tree *tree, int hfindex, tvbuff_t *tvb,
 	else {
 		/* n will be zero except when it's a FT_UINT_BYTES */
 		proto_tree_set_bytes_tvb(new_fi, tvb, start + n, length);
+
+		/* XXX: If we have a non-NULL tree but NULL retval, we don't
+		 * use the byte array created above in this case.
+		 */
+		if (created_bytes)
+		    g_byte_array_free(created_bytes, TRUE);
 
 		FI_SET_FLAG(new_fi,
 			(encoding & ENC_LITTLE_ENDIAN) ? FI_LITTLE_ENDIAN : FI_BIG_ENDIAN);
@@ -4430,9 +4465,8 @@ proto_tree_add_time_item(proto_tree *tree, int hfindex, tvbuff_t *tvb,
 		 * ENC_ISO_8601_TIME, and that is treated as an absolute time
 		 * relative to "now" currently.
 		 */
-		tvb_get_string_time(tvb, start, length, encoding, &time_stamp, endoff);
-		/* grab the errno now before it gets overwritten */
-		saved_err = errno;
+		if (!tvb_get_string_time(tvb, start, length, encoding, &time_stamp, endoff))
+			saved_err = EINVAL;
 	}
 	else {
 		DISSECTOR_ASSERT_FIELD_TYPE_IS_TIME(hfinfo);
@@ -4459,10 +4493,8 @@ proto_tree_add_time_item(proto_tree *tree, int hfindex, tvbuff_t *tvb,
 	proto_tree_set_time(new_fi, &time_stamp);
 
 	if (encoding & ENC_STRING) {
-		if (saved_err == ERANGE)
-		    expert_add_info(NULL, tree, &ei_number_string_decoding_erange_error);
-		else if (saved_err == EDOM)
-		    expert_add_info(NULL, tree, &ei_number_string_decoding_failed_error);
+		if (saved_err)
+		    expert_add_info(NULL, tree, &ei_date_time_string_decoding_failed_error);
 	}
 	else {
 		FI_SET_FLAG(new_fi,
@@ -6103,6 +6135,105 @@ proto_tree_set_eui64_tvb(field_info *fi, tvbuff_t *tvb, gint start, const guint 
 	}
 }
 
+proto_item *
+proto_tree_add_mac48_detail(const mac_hf_list_t *list_specific,
+			    const mac_hf_list_t *list_generic,
+			    gint idx, tvbuff_t *tvb,
+			    proto_tree *tree, gint offset)
+{
+	const guint8   addr[6];
+	const char    *addr_name  = NULL;
+	const gchar   *oui_name   = NULL;
+	proto_item    *addr_item  = NULL;
+	proto_tree    *addr_tree  = NULL;
+	proto_item    *ret_val    = NULL;
+
+	if (tree == NULL || list_specific == NULL) {
+		return NULL;
+	}
+
+	/* Resolve what we can of the address */
+	tvb_memcpy(tvb, (void *)addr, offset, 6);
+	if (list_specific->hf_addr_resolved || (list_generic && list_generic->hf_addr_resolved)) {
+		addr_name = get_ether_name(addr);
+	}
+	if (list_specific->hf_oui_resolved || (list_generic && list_generic->hf_oui_resolved)) {
+		oui_name = get_manuf_name_if_known(addr, sizeof(addr));
+	}
+
+	/* Add the item for the specific address type */
+	ret_val = proto_tree_add_item(tree, *list_specific->hf_addr, tvb, offset, 6, ENC_NA);
+	if (idx >= 0) {
+		addr_tree = proto_item_add_subtree(ret_val, idx);
+	}
+	else {
+		addr_tree = tree;
+	}
+
+	if (list_specific->hf_addr_resolved != NULL) {
+		addr_item = proto_tree_add_string(addr_tree, *list_specific->hf_addr_resolved,
+						  tvb, offset, 6, addr_name);
+		proto_item_set_generated(addr_item);
+		proto_item_set_hidden(addr_item);
+	}
+
+	if (list_specific->hf_oui != NULL) {
+		addr_item = proto_tree_add_item(addr_tree, *list_specific->hf_oui, tvb, offset, 3, ENC_NA);
+		proto_item_set_generated(addr_item);
+		proto_item_set_hidden(addr_item);
+
+		if (oui_name != NULL && list_specific->hf_oui_resolved != NULL) {
+			addr_item = proto_tree_add_string(addr_tree, *list_specific->hf_oui_resolved, tvb, offset, 6, oui_name);
+			proto_item_set_generated(addr_item);
+			proto_item_set_hidden(addr_item);
+		}
+	}
+
+	if (list_specific->hf_lg != NULL) {
+		proto_tree_add_item(addr_tree, *list_specific->hf_lg, tvb, offset, 3, ENC_BIG_ENDIAN);
+	}
+	if (list_specific->hf_ig != NULL) {
+		proto_tree_add_item(addr_tree, *list_specific->hf_ig, tvb, offset, 3, ENC_BIG_ENDIAN);
+	}
+
+	/* Were we given a list for generic address fields? If not, stop here */
+	if (list_generic == NULL) {
+		return ret_val;
+	}
+
+	addr_item = proto_tree_add_item(addr_tree, *list_generic->hf_addr, tvb, offset, 6, ENC_NA);
+	proto_item_set_hidden(addr_item);
+
+	if (list_generic->hf_addr_resolved != NULL) {
+		addr_item = proto_tree_add_string(addr_tree, *list_generic->hf_addr_resolved,
+						  tvb, offset, 6, addr_name);
+		proto_item_set_generated(addr_item);
+		proto_item_set_hidden(addr_item);
+	}
+
+	if (list_generic->hf_oui != NULL) {
+		addr_item = proto_tree_add_item(addr_tree, *list_generic->hf_oui, tvb, offset, 3, ENC_NA);
+		proto_item_set_generated(addr_item);
+		proto_item_set_hidden(addr_item);
+
+		if (oui_name != NULL && list_generic->hf_oui_resolved != NULL) {
+			addr_item = proto_tree_add_string(addr_tree, *list_generic->hf_oui_resolved, tvb, offset, 6, oui_name);
+			proto_item_set_generated(addr_item);
+			proto_item_set_hidden(addr_item);
+		}
+	}
+
+	if (list_generic->hf_lg != NULL) {
+		addr_item = proto_tree_add_item(addr_tree, *list_generic->hf_lg, tvb, offset, 3, ENC_BIG_ENDIAN);
+		proto_item_set_hidden(addr_item);
+	}
+	if (list_generic->hf_ig != NULL) {
+		addr_item = proto_tree_add_item(addr_tree, *list_generic->hf_ig, tvb, offset, 3, ENC_BIG_ENDIAN);
+		proto_item_set_hidden(addr_item);
+	}
+	return ret_val;
+}
+
 /* Add a field_info struct to the proto_tree, encapsulating it in a proto_node */
 static proto_item *
 proto_tree_add_node(proto_tree *tree, field_info *fi)
@@ -6120,6 +6251,8 @@ proto_tree_add_node(proto_tree *tree, field_info *fi)
 		for (tnode = tree; tnode != NULL; tnode = tnode->parent) {
 			depth++;
 			if (G_UNLIKELY(depth > prefs.gui_max_tree_depth)) {
+				fvalue_free(fi->value);
+				fi->value = NULL;
 				THROW_MESSAGE(DissectorError, wmem_strdup_printf(PNODE_POOL(tree),
 						     "Maximum tree depth %d exceeded for \"%s\" - \"%s\" (%s:%u) (Maximum depth can be increased in advanced preferences)",
 						     prefs.gui_max_tree_depth,
@@ -6140,6 +6273,11 @@ proto_tree_add_node(proto_tree *tree, field_info *fi)
 	tnode = tree;
 	tfi = PNODE_FINFO(tnode);
 	if (tfi != NULL && (tfi->tree_type < 0 || tfi->tree_type >= num_tree_types)) {
+		/* Since we are not adding fi to a node, its fvalue won't get
+		 * freed by proto_tree_free_node(), so free it now.
+		 */
+		fvalue_free(fi->value);
+		fi->value = NULL;
 		REPORT_DISSECTOR_BUG("\"%s\" - \"%s\" tfi->tree_type: %d invalid (%s:%u)",
 				     fi->hfinfo->name, fi->hfinfo->abbrev, tfi->tree_type, __FILE__, __LINE__);
 		/* XXX - is it safe to continue here? */
@@ -6648,7 +6786,6 @@ proto_item_fill_display_label(field_info *finfo, gchar *display_label_str, const
 	const guint8 *bytes;
 	guint32 number;
 	guint64 number64;
-	const true_false_string  *tfstring;
 	const char *hf_str_val;
 	char number_buf[48];
 	const char *number_out;
@@ -6686,12 +6823,8 @@ proto_item_fill_display_label(field_info *finfo, gchar *display_label_str, const
 
 		case FT_BOOLEAN:
 			number64 = fvalue_get_uinteger64(finfo->value);
-			tfstring = &tfs_true_false;
-			if (hfinfo->strings) {
-				tfstring = (const struct true_false_string*) hfinfo->strings;
-			}
 			label_len = protoo_strlcpy(display_label_str,
-					tfs_get_string(!!number64, tfstring), label_str_size);
+					tfs_get_string(!!number64, hfinfo->strings), label_str_size);
 			break;
 
 		case FT_CHAR:
@@ -9111,35 +9244,57 @@ register_type_length_mismatch(void)
 }
 
 static void
-register_number_string_decodinws_error(void)
+register_byte_array_string_decodinws_error(void)
 {
 	static ei_register_info ei[] = {
-		{ &ei_number_string_decoding_failed_error,
-			{ "_ws.number_string.decoding_error.failed", PI_MALFORMED, PI_ERROR,
-			  "Failed to decode number from string", EXPFILL
-			}
-		},
-		{ &ei_number_string_decoding_erange_error,
-			{ "_ws.number_string.decoding_error.erange", PI_MALFORMED, PI_ERROR,
-			  "Decoded number from string is out of valid range", EXPFILL
+		{ &ei_byte_array_string_decoding_failed_error,
+			{ "_ws.byte_array_string.decoding_error.failed", PI_MALFORMED, PI_ERROR,
+			  "Failed to decode byte array from string", EXPFILL
 			}
 		},
 	};
 
-	expert_module_t* expert_number_string_decoding_error;
+	expert_module_t* expert_byte_array_string_decoding_error;
 
-	proto_number_string_decoding_error =
-		proto_register_protocol("Number-String Decoding Error",
-					"Number-string decoding error",
-					"_ws.number_string.decoding_error");
+	proto_byte_array_string_decoding_error =
+		proto_register_protocol("Byte Array-String Decoding Error",
+					"Byte Array-string decoding error",
+					"_ws.byte_array_string.decoding_error");
 
-	expert_number_string_decoding_error =
-		expert_register_protocol(proto_number_string_decoding_error);
-	expert_register_field_array(expert_number_string_decoding_error, ei, array_length(ei));
+	expert_byte_array_string_decoding_error =
+		expert_register_protocol(proto_byte_array_string_decoding_error);
+	expert_register_field_array(expert_byte_array_string_decoding_error, ei, array_length(ei));
 
-	/* "Number-String Decoding Error" isn't really a protocol, it's an error indication;
+	/* "Byte Array-String Decoding Error" isn't really a protocol, it's an error indication;
 	   disabling them makes no sense. */
-	proto_set_cant_toggle(proto_number_string_decoding_error);
+	proto_set_cant_toggle(proto_byte_array_string_decoding_error);
+}
+
+static void
+register_date_time_string_decodinws_error(void)
+{
+	static ei_register_info ei[] = {
+		{ &ei_date_time_string_decoding_failed_error,
+			{ "_ws.date_time_string.decoding_error.failed", PI_MALFORMED, PI_ERROR,
+			  "Failed to decode date and time from string", EXPFILL
+			}
+		},
+	};
+
+	expert_module_t* expert_date_time_string_decoding_error;
+
+	proto_date_time_string_decoding_error =
+		proto_register_protocol("Date and Time-String Decoding Error",
+					"Date and Time-string decoding error",
+					"_ws.date_time_string.decoding_error");
+
+	expert_date_time_string_decoding_error =
+		expert_register_protocol(proto_date_time_string_decoding_error);
+	expert_register_field_array(expert_date_time_string_decoding_error, ei, array_length(ei));
+
+	/* "Date and Time-String Decoding Error" isn't really a protocol, it's an error indication;
+	   disabling them makes no sense. */
+	proto_set_cant_toggle(proto_date_time_string_decoding_error);
 }
 
 static void
@@ -9688,11 +9843,6 @@ fill_label_boolean(field_info *fi, gchar *label_str)
 	guint64  value;
 
 	header_field_info	*hfinfo   = fi->hfinfo;
-	const true_false_string	*tfstring = &tfs_true_false;
-
-	if (hfinfo->strings) {
-		tfstring = (const struct true_false_string*) hfinfo->strings;
-	}
 
 	value = fvalue_get_uinteger64(fi->value);
 	if (hfinfo->bitmask) {
@@ -9709,7 +9859,7 @@ fill_label_boolean(field_info *fi, gchar *label_str)
 	}
 
 	/* Fill in the textual info */
-	label_fill(label_str, bitfield_byte_length, hfinfo, tfs_get_string(!!value, tfstring));
+	label_fill(label_str, bitfield_byte_length, hfinfo, tfs_get_string(!!value, hfinfo->strings));
 }
 
 static const char *
@@ -12592,8 +12742,6 @@ _proto_tree_add_bits_ret_val(proto_tree *tree, const int hfindex, tvbuff_t *tvb,
 	proto_item        *pi;
 	header_field_info *hf_field;
 
-	const true_false_string *tfstring;
-
 	/* We can't fake it just yet. We have to fill in the 'return_value' parameter */
 	PROTO_REGISTRAR_GET_NTH(hfindex, hf_field);
 
@@ -12657,12 +12805,9 @@ _proto_tree_add_bits_ret_val(proto_tree *tree, const int hfindex, tvbuff_t *tvb,
 	switch (hf_field->type) {
 	case FT_BOOLEAN:
 		/* Boolean field */
-		tfstring = &tfs_true_false;
-		if (hf_field->strings)
-			tfstring = (const true_false_string *)hf_field->strings;
 		return proto_tree_add_boolean_format(tree, hfindex, tvb, offset, length, (guint32)value,
 			"%s = %s: %s",
-			bf_str, hf_field->name, tfs_get_string(!!value, tfstring));
+			bf_str, hf_field->name, tfs_get_string(!!value, hf_field->strings));
 		break;
 
 	case FT_CHAR:
@@ -12744,7 +12889,6 @@ proto_tree_add_split_bits_item_ret_val(proto_tree *tree, const int hfindex, tvbu
 	guint64     composite_bitmap;
 
 	header_field_info       *hf_field;
-	const true_false_string *tfstring;
 
 	/* We can't fake it just yet. We have to fill in the 'return_value' parameter */
 	PROTO_REGISTRAR_GET_NTH(hfindex, hf_field);
@@ -12850,13 +12994,10 @@ proto_tree_add_split_bits_item_ret_val(proto_tree *tree, const int hfindex, tvbu
 	switch (hf_field->type) {
 	case FT_BOOLEAN: /* it is a bit odd to have a boolean encoded as split-bits, but possible, I suppose? */
 		/* Boolean field */
-		tfstring = &tfs_true_false;
-		if (hf_field->strings)
-			tfstring = (const true_false_string *) hf_field->strings;
 		return proto_tree_add_boolean_format(tree, hfindex,
 						     tvb, octet_offset, octet_length, (guint32)value,
 						     "%s = %s: %s",
-						     bf_str, hf_field->name, tfs_get_string(!!value, tfstring));
+						     bf_str, hf_field->name, tfs_get_string(!!value, hf_field->strings));
 		break;
 
 	case FT_CHAR:

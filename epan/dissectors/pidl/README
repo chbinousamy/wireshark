@@ -26,6 +26,8 @@ The following files:
 ../packet-dcerpc-frsrpc.h
 ../packet-dcerpc-frstrans.h
 ../packet-dcerpc-initshutdown.h
+../packet-dcerpc-iwbemlevel1login.h
+../packet-dcerpc-iwbemloginclientid.h
 ../packet-dcerpc-lsa.h
 ../packet-dcerpc-mapi.h
 ../packet-dcerpc-misc.h
@@ -104,7 +106,3 @@ pidl complains that inline arrays aren't supported for these:
 pidl generates possibly-incorrect code for these - this needs checking:
 
 	rfr/rfr.idl
-
-pidl rejects these with errors:
-
-	wkssvc.cnf

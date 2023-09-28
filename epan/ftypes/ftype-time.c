@@ -6,6 +6,7 @@
  * SPDX-License-Identifier: GPL-2.0-or-later
  */
 
+#define _GNU_SOURCE
 #include "config.h"
 #include "ftypes-int.h"
 
@@ -33,7 +34,7 @@ cmp_order(const fvalue_t *a, const fvalue_t *b, int *cmp)
  *
  * If successful endptr points to the first invalid character.
  */
-static gboolean
+static bool
 get_nsecs(const char *startp, int *nsecs, const char **endptr)
 {
 	int ndigits = 0;
@@ -67,7 +68,7 @@ get_nsecs(const char *startp, int *nsecs, const char **endptr)
 			/*
 			 * Not a digit - error.
 			 */
-			return FALSE;
+			return false;
 		}
 		digit = *p - '0';
 		if (digit != 0) {
@@ -80,7 +81,7 @@ get_nsecs(const char *startp, int *nsecs, const char **endptr)
 			 * isn't valid.
 			 */
 			if (scale < 0)
-				return FALSE;
+				return false;
 			for (i = 0; i < scale; i++)
 				digit *= 10;
 			val += digit;
@@ -90,20 +91,20 @@ get_nsecs(const char *startp, int *nsecs, const char **endptr)
 	*nsecs = val;
 	if (endptr)
 		*endptr = startp + ndigits;
-	return TRUE;
+	return true;
 }
 
-static gboolean
+static bool
 val_from_unix_time(fvalue_t *fv, const char *s)
 {
 	const char    *curptr;
 	char *endptr;
-	gboolean negative = FALSE;
+	bool negative = false;
 
 	curptr = s;
 
 	if (*curptr == '-') {
-		negative = TRUE;
+		negative = true;
 		curptr++;
 	}
 
@@ -117,7 +118,7 @@ val_from_unix_time(fvalue_t *fv, const char *s)
 		 */
 		fv->value.time.secs = strtoul(curptr, &endptr, 10);
 		if (endptr == curptr || (*endptr != '\0' && *endptr != '.'))
-			return FALSE;
+			return false;
 		curptr = endptr;
 		if (*curptr == '.')
 			curptr++;	/* skip the decimal point */
@@ -138,7 +139,7 @@ val_from_unix_time(fvalue_t *fv, const char *s)
 		 * Get the nanoseconds value.
 		 */
 		if (!get_nsecs(curptr, &fv->value.time.nsecs, NULL))
-			return FALSE;
+			return false;
 	} else {
 		/*
 		 * No nanoseconds value - it's 0.
@@ -150,18 +151,18 @@ val_from_unix_time(fvalue_t *fv, const char *s)
 		fv->value.time.secs = -fv->value.time.secs;
 		fv->value.time.nsecs = -fv->value.time.nsecs;
 	}
-	return TRUE;
+	return true;
 }
 
-static gboolean
-relative_val_from_literal(fvalue_t *fv, const char *s, gboolean allow_partial_value _U_, gchar **err_msg)
+static bool
+relative_val_from_literal(fvalue_t *fv, const char *s, bool allow_partial_value _U_, char **err_msg)
 {
 	if (val_from_unix_time(fv, s))
-		return TRUE;
+		return true;
 
 	if (err_msg != NULL)
 		*err_msg = ws_strdup_printf("\"%s\" is not a valid time.", s);
-	return FALSE;
+	return false;
 }
 
 /*
@@ -174,50 +175,103 @@ relative_val_from_literal(fvalue_t *fv, const char *s, gboolean allow_partial_va
  * (https://docs.microsoft.com/en-us/cpp/c-runtime-library/reference/mktime-mktime32-mktime64)
  */
 
+/*
+ * Timezone support:
+ *
+     %z    an ISO 8601, RFC-2822, or RFC-3339 time zone specification.  (A
+           NetBSD extension.)  This is one of the following:
+                 -   The offset from Coordinated Universal Time (`UTC') speci-
+                     fied as:
+                           ·   [+-]hhmm
+                           ·   [+-]hh:mm
+                           ·   [+-]hh
+                 -   `UTC' specified as:
+                           ·   UTC (`Coordinated Universal Time')
+                           ·   GMT (`Greenwich Mean Time')
+                           ·   UT (`Universal Time')
+                           ·   Z (`Zulu Time')
+                 -   A three character US time zone specified as:
+                           ·   EDT
+                           ·   EST
+                           ·   CDT
+                           ·   CST
+                           ·   MDT
+                           ·   MST
+                           ·   PDT
+                           ·   PST
+                     with the first letter standing for `Eastern' (``E''),
+                     `Central' (``C''), `Mountain' (``M'') or `Pacific'
+                     (``P''), and the second letter standing for `Daylight'
+                     (``D'' or summer) time or `Standard' (``S'') time
+                 -   a single letter military or nautical time zone specified
+                     as:
+                           ·   ``A'' through ``I''
+                           ·   ``K'' through ``Y''
+                           ·   ``J'' (non-nautical local time zone)
+
+     %Z    time zone name or no characters when time zone information is
+           unavailable.  (A NetBSD extension.)
+*/
+
+/*
+ * POSIX and C11 calendar time APIs are limited, poorly documented and have
+ * loads of bagage and surprising behavior and quirks (most stemming from
+ * the fact that the struct tm argument is sometimes both input and output).
+ * See the following reference for a reliable method of handling arbitrary timezones:
+ *    C: Converting struct tm times with timezone to time_t
+ *    http://kbyanc.blogspot.com/2007/06/c-converting-struct-tm-times-with.html
+ * Relevant excerpt:
+ *    "However, if your libc implements both tm_gmtoff and timegm(3) you are
+ *    in luck. You just need to use timegm(3) to get the time_t representing
+ *    the time in GMT and then subtract the offset stored in tm_gmtoff.
+ *    The tricky part is that calling timegm(3) will modify the struct tm,
+ *    clearing the tm_gmtoff field to zero."
+ */
+
 #define EXAMPLE "Example: \"Nov 12, 1999 08:55:44.123\" or \"2011-07-04 12:34:56\""
 
-static gboolean
+static bool
 absolute_val_from_string(fvalue_t *fv, const char *s, size_t len _U_, char **err_msg_ptr)
 {
 	struct tm tm;
 	const char *bufptr, *curptr = NULL;
 	const char *endptr;
-	gboolean has_seconds = TRUE;
+	bool has_seconds = true;
+	bool has_timezone = true;
 	char *err_msg = NULL;
+	struct ws_timezone zoneinfo = { 0, NULL };
 
 	/* Try Unix time first. */
 	if (val_from_unix_time(fv, s))
-		return TRUE;
+		return true;
 
 	/* Try ISO 8601 format. */
-	if (iso8601_to_nstime(&fv->value.time, s, ISO8601_DATETIME) == strlen(s))
-		return TRUE;
+	endptr = iso8601_to_nstime(&fv->value.time, s, ISO8601_DATETIME);
+	/* Check whether it parsed all of the string */
+	if (endptr != NULL && *endptr == '\0')
+		return true;
 
-	/* Try other legacy formats. */
+	/* No - try other legacy formats. */
 	memset(&tm, 0, sizeof(tm));
 	/* Let the computer figure out if it's DST. */
 	tm.tm_isdst = -1;
 
-	/* Parse the date. ws_strptime() always uses the "C" locale. s*/
+	/* Parse the date. ws_strptime() always uses the "C" locale. */
 	bufptr = s;
-	curptr = ws_strptime(bufptr, "%b %d, %Y", &tm);
+	curptr = ws_strptime(bufptr, "%b %d, %Y", &tm, &zoneinfo);
 	if (curptr == NULL)
-		curptr = ws_strptime(bufptr,"%Y-%m-%d", &tm);
+		curptr = ws_strptime(bufptr,"%Y-%m-%d", &tm, &zoneinfo);
 	if (curptr == NULL)
 		goto fail;
 
 	/* Parse the time, it is optional. */
-	/*
-	 * XXX: This is a date *and* time value. Allowing to omit the time presumably means it is midnight.
-	 * How useful is that short-hand? Not very IMO.
-	 */
 	bufptr = curptr;
-	curptr = ws_strptime(bufptr, " %H:%M:%S", &tm);
+	curptr = ws_strptime(bufptr, " %H:%M:%S", &tm, &zoneinfo);
 	if (curptr == NULL) {
-		has_seconds = FALSE;
+		has_seconds = false;
 		/* Seconds can be omitted but minutes (and hours) are required
 		 * for a valid time value. */
-		curptr = ws_strptime(bufptr," %H:%M", &tm);
+		curptr = ws_strptime(bufptr," %H:%M", &tm, &zoneinfo);
 	}
 	if (curptr == NULL)
 		curptr = bufptr;
@@ -247,35 +301,34 @@ absolute_val_from_string(fvalue_t *fv, const char *s, size_t len _U_, char **err
 		fv->value.time.nsecs = 0;
 	}
 
+	/* Timezone */
+	bufptr = curptr;
+	curptr = ws_strptime(bufptr, "%n%z", &tm, &zoneinfo);
+	if (curptr == NULL) {
+		/* No timezone, assume localtime. */
+		has_timezone = false;
+		curptr = bufptr;
+	}
+
 	/* Skip whitespace */
 	while (g_ascii_isspace(*curptr)) {
 		curptr++;
 	}
 
-	/* Do we have a Timezone? */
-	if (strcmp(curptr, "UTC") == 0) {
-		curptr += strlen("UTC");
-		if (*curptr == '\0') {
-			/* It's UTC */
-			fv->value.time.secs = mktime_utc(&tm);
-			goto done;
-		}
-		else {
-			err_msg = ws_strdup("Unexpected data after time value.");
-			goto fail;
-		}
-	}
-	if (*curptr == '\0') {
-		/* Local time */
-		fv->value.time.secs = mktime(&tm);
-		goto done;
-	}
-	else {
+	if (*curptr != '\0') {
 		err_msg = ws_strdup("Unexpected data after time value.");
 		goto fail;
 	}
 
-done:
+	if (has_timezone) {
+		/* Convert our calendar time (presumed in UTC, possibly with
+		 * an extra timezone offset correction datum) to epoch time. */
+		fv->value.time.secs = mktime_utc(&tm);
+	}
+	else {
+		/* Convert our calendar time (in the local timezone) to epoch time. */
+		fv->value.time.secs = mktime(&tm);
+	}
 	if (fv->value.time.secs == (time_t)-1) {
 		/*
 		 * XXX - should we supply an error message that mentions
@@ -291,7 +344,12 @@ done:
 		goto fail;
 	}
 
-	return TRUE;
+	if (has_timezone) {
+		/* Normalize to UTC with the offset we have saved. */
+		fv->value.time.secs -= zoneinfo.tm_gmtoff;
+	}
+
+	return true;
 
 fail:
 	if (err_msg_ptr != NULL) {
@@ -306,11 +364,11 @@ fail:
 		g_free(err_msg);
 	}
 
-	return FALSE;
+	return false;
 }
 
-static gboolean
-absolute_val_from_literal(fvalue_t *fv, const char *s, gboolean allow_partial_value _U_, gchar **err_msg)
+static bool
+absolute_val_from_literal(fvalue_t *fv, const char *s, bool allow_partial_value _U_, char **err_msg)
 {
 	return absolute_val_from_string(fv, s, 0, err_msg);
 }
@@ -382,6 +440,7 @@ absolute_val_to_repr(wmem_allocator_t *scope, const fvalue_t *fv, ftrepr_t rtype
 
 	switch (rtype) {
 		case FTREPR_DISPLAY:
+		case FTREPR_JSON:
 			rep = abs_time_to_str_ex(scope, &fv->value.time,
 					field_display, ABS_TIME_TO_STR_SHOW_ZONE);
 			break;
@@ -413,19 +472,19 @@ relative_val_to_repr(wmem_allocator_t *scope, const fvalue_t *fv, ftrepr_t rtype
 	return rel_time_to_secs_str(scope, &fv->value.time);
 }
 
-static guint
+static unsigned
 time_hash(const fvalue_t *fv)
 {
 	return nstime_hash(&fv->value.time);
 }
 
-static gboolean
+static bool
 time_is_zero(const fvalue_t *fv)
 {
 	return nstime_is_zero(&fv->value.time);
 }
 
-static gboolean
+static bool
 time_is_negative(const fvalue_t *fv)
 {
 	return fv->value.time.secs < 0;

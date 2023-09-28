@@ -954,6 +954,11 @@ static void dissect_sdp_session_attribute(tvbuff_t *tvb, packet_info * pinfo, pr
 
     offset = next_offset + 1;
 
+    if (tvb_captured_length_remaining(tvb, offset) == 0) {
+        expert_add_info(pinfo, ti, &ei_sdp_invalid_line_fields);
+        return;
+    }
+
     if (strcmp((const char *)field_name, "ipbcp") == 0) {
         offset = tvb_ws_mempbrk_pattern_guint8(tvb, offset, -1,&pbrk_digits, NULL);
 
@@ -2337,13 +2342,13 @@ apply_sdp_transport(packet_info *pinfo, transport_info_t *transport_info, int re
                                  media_desc->media.rtp_dyn_payload, srtp_info,
                                  setup_info);
                 DENDENT();
-            } else {
+            } else if (!setup_info || !setup_info->is_osmux) {
                 DPRINT(("calling rtp_add_address, channel=%d, media_port=%d",
                         i, media_desc->media_port));
                 DINDENT();
                 srtp_add_address(pinfo, PT_UDP, &media_desc->conn_addr, media_desc->media_port, 0, "SDP", establish_frame,
-                                media_desc->media_types,
-                                media_desc->media.rtp_dyn_payload, NULL, setup_info);
+                                 media_desc->media_types,
+                                 media_desc->media.rtp_dyn_payload, NULL, setup_info);
                 DENDENT();
             }
             /* SPRT might use the same port... */
@@ -2356,7 +2361,7 @@ apply_sdp_transport(packet_info *pinfo, transport_info_t *transport_info, int re
                     DINDENT();
                     srtcp_add_address(pinfo, &media_desc->conn_addr, media_desc->control_port, 0, "SDP", establish_frame, srtp_info);
                     DENDENT();
-                 } else {
+                 } else if (!setup_info || !setup_info->is_osmux) {
                     DPRINT(("calling rtcp_add_address, channel=%d, control_port=%d",
                             i, media_desc->control_port));
                     DINDENT();
